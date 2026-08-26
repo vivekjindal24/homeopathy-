@@ -230,13 +230,19 @@ class _PatientManagementState extends State<PatientManagement> {
       );
       return;
     }
+    if (_apiService.userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to book appointments.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
 
     final formKey = GlobalKey<FormState>();
     final dateController = TextEditingController(text: DateTime.now().toIso8601String().split('T')[0]);
     final timeController = TextEditingController(text: "10:00");
 
     String visitType = VisitType.newVisit; // New / Follow-Up / Walk-In
-    String doctorId = _apiService.userId ?? ""; // Single doctor, default is active user
+    String doctorId = _apiService.userId!;
     bool submitting = false;
 
     showDialog(
@@ -285,9 +291,6 @@ class _PatientManagementState extends State<PatientManagement> {
                     ? null
                     : () async {
                         if (formKey.currentState!.validate()) {
-                          if (doctorId.isEmpty) {
-                            doctorId = "doctor-uuid-placeholder";
-                          }
                           setDialogState(() => submitting = true);
                           try {
                             await _apiService.createAppointment({

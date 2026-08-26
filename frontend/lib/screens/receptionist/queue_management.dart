@@ -496,7 +496,7 @@ class _QueueManagementState extends State<QueueManagement> {
                       // In Consultation Column
                       Expanded(
                         child: _buildQueueColumn(
-                          title: "In Consultation",
+                          title: AppointmentStatus.inConsultation,
                           count: inConsultation.length,
                           color: Colors.purple[700]!,
                           items: inConsultation,

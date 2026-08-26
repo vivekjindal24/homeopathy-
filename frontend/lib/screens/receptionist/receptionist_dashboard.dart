@@ -567,10 +567,10 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   Widget _buildQueuePreview(int waiting, int inConsult, int completed) {
     final noShow = _appointments.where((a) => a['status'] == AppointmentStatus.noShow).length;
     final cols = [
-      {'label': 'Waiting', 'count': waiting, 'color': cAmber700, 'bg': cAmber50, 'border': cAmber200},
-      {'label': 'In Consultation', 'count': inConsult, 'color': cBlue700, 'bg': cBlue50, 'border': cBlue200},
-      {'label': 'Completed', 'count': completed, 'color': cEm700, 'bg': cEm50, 'border': cEm200},
-      {'label': 'No Show', 'count': noShow, 'color': cSlate600, 'bg': cSlate50, 'border': cSlate200},
+      {'label': AppointmentStatus.arrived, 'count': waiting, 'color': cAmber700, 'bg': cAmber50, 'border': cAmber200},
+      {'label': AppointmentStatus.inConsultation, 'count': inConsult, 'color': cBlue700, 'bg': cBlue50, 'border': cBlue200},
+      {'label': AppointmentStatus.completed, 'count': completed, 'color': cEm700, 'bg': cEm50, 'border': cEm200},
+      {'label': AppointmentStatus.noShow, 'count': noShow, 'color': cSlate600, 'bg': cSlate50, 'border': cSlate200},
     ];
 
     return Container(
@@ -659,7 +659,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       {'label': 'Total Today', 'value': total, 'color': cPrimary},
       {'label': 'Walk-Ins', 'value': walkIns, 'color': const Color(0xFF60A5FA)},
       {'label': 'Follow Ups', 'value': followUps, 'color': cPurple700},
-      {'label': 'Cancelled', 'value': cancelled, 'color': cRed600},
+      {'label': AppointmentStatus.cancelled, 'value': cancelled, 'color': cRed600},
     ];
     return Container(
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
@@ -1013,7 +1013,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // Waiting
           Expanded(child: _queueColumn(
-            label: 'Waiting', color: cAmber700, bg: cAmber50, borderColor: cAmber200,
+            label: AppointmentStatus.arrived, color: cAmber700, bg: cAmber50, borderColor: cAmber200,
             badge: '${waiting.length}', dotColor: const Color(0xFFF59E0B),
             child: Column(children: [
               if (waiting.isEmpty) _emptyColumnMsg('No patients waiting', Icons.people_outline_rounded),
@@ -1023,7 +1023,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           const SizedBox(width: 16),
           // In Consultation
           Expanded(child: _queueColumn(
-            label: 'In Consultation', color: cBlue700, bg: cBlue50, borderColor: cBlue200,
+            label: AppointmentStatus.inConsultation, color: cBlue700, bg: cBlue50, borderColor: cBlue200,
             badge: '${consult.length}/1', dotColor: const Color(0xFF3B82F6), pulseDot: true,
             child: Column(children: [
               if (activeC == null) _emptyColumnMsg('No active consultation\nStart a patient from the waiting queue', Icons.medical_services_outlined)
@@ -1033,7 +1033,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           const SizedBox(width: 16),
           // Completed
           Expanded(child: _queueColumn(
-            label: 'Completed', color: cEm700, bg: cEm50, borderColor: cEm200,
+            label: AppointmentStatus.completed, color: cEm700, bg: cEm50, borderColor: cEm200,
             badge: '${completed.length}', dotColor: cEm600,
             child: Column(children: [
               if (completed.isEmpty) _emptyColumnMsg('No completions yet', Icons.check_circle_outline_rounded),
@@ -1043,7 +1043,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           const SizedBox(width: 16),
           // No Show
           Expanded(child: _queueColumn(
-            label: 'No Show', color: cSlate600, bg: cSlate50, borderColor: cSlate200,
+            label: AppointmentStatus.noShow, color: cSlate600, bg: cSlate50, borderColor: cSlate200,
             badge: '${noShow.length}', dotColor: cSlate400,
             child: Column(children: [
               if (noShow.isEmpty) _emptyColumnMsg('None', Icons.person_off_outlined),
@@ -1095,7 +1095,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(token != null ? 'T-$token' : 'T--', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: cAmber700, height: 1)),
-          _tagBadge('${a['visit_type'] ?? 'New'}', cBlue50, cBlue700),
+          _tagBadge('${a['visit_type'] ?? VisitType.newVisit}', cBlue50, cBlue700),
         ]),
         const SizedBox(height: 6),
         Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
@@ -1112,7 +1112,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           Expanded(child: InkWell(
             onTap: () => _updateStatus(a['appt_id'], AppointmentStatus.noShow),
             borderRadius: BorderRadius.circular(8),
-            child: Container(padding: const EdgeInsets.symmetric(vertical: 7), decoration: BoxDecoration(border: Border.all(color: cBorder), borderRadius: BorderRadius.circular(8)), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.person_off_outlined, size: 14, color: cMuted), SizedBox(width: 4), Text('No Show', style: TextStyle(fontSize: 11, color: cMuted))])),
+            child: Container(padding: const EdgeInsets.symmetric(vertical: 7), decoration: BoxDecoration(border: Border.all(color: cBorder), borderRadius: BorderRadius.circular(8)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.person_off_outlined, size: 14, color: cMuted), const SizedBox(width: 4), Text(AppointmentStatus.noShow, style: const TextStyle(fontSize: 11, color: cMuted))])),
           )),
         ]),
       ]),
@@ -1709,6 +1709,12 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   }
 
   void _showBookApptDialog() {
+    if (_api.userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to book appointments.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
     final formKey = GlobalKey<FormState>();
     String? selectedPatientId;
     final dateCtrl = TextEditingController(text: _date);
@@ -1792,7 +1798,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                   try {
                     await _api.createAppointment({
                       'patient_id': selectedPatientId,
-                      'doctor_id': _api.userId ?? 'doctor-uuid-placeholder',
+                      'doctor_id': _api.userId!,
                       'clinic_id': _clinicId,
                       'appt_date': dateCtrl.text.trim(),
                       'appt_time': timeCtrl.text.trim(),

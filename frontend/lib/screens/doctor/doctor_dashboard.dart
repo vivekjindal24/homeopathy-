@@ -37,6 +37,8 @@ const cPurple700= Color(0xFF7E22CE);
 const cOrange50 = Color(0xFFFFF7ED);
 const cOrange500= Color(0xFFF97316);
 
+double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
+
 class DoctorDashboard extends StatefulWidget {
   const DoctorDashboard({super.key});
   @override
@@ -1078,19 +1080,32 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   }
 
   // ─── TAB 6: BILLING ──────────────────────────────────
+  static const _overdueFilter = 'Overdue';
+
   Widget _buildBillingTab() {
-    final statusFilters = ['All', 'Paid', 'Partial', 'Overdue', 'Draft'];
+    final isOverdue = (dynamic inv) =>
+        inv['status'] == InvoiceStatus.issued && _parseAmount(inv['due_amount']) > 0;
+    final statusFilters = ['All', InvoiceStatus.paid, InvoiceStatus.partiallyPaid, _overdueFilter, InvoiceStatus.draft];
     String activeStatus = 'All';
     final metrics = [
       {'label': 'Total Invoices', 'value': '${_invoices.length}', 'icon': Icons.receipt_long_outlined, 'ic': cPrimary, 'ibg': cEm50},
-      {'label': 'Paid', 'value': '${_invoices.where((i) => i['status'] == 'Paid').length}', 'icon': Icons.check_circle_outline_rounded, 'ic': cEm600, 'ibg': cEm50},
-      {'label': 'Partial', 'value': '${_invoices.where((i) => i['status'] == 'Partial').length}', 'icon': Icons.pending_outlined, 'ic': cAmber700, 'ibg': cAmber50},
-      {'label': 'Overdue', 'value': '${_invoices.where((i) => i['status'] == 'Draft').length}', 'icon': Icons.warning_amber_rounded, 'ic': cRed600, 'ibg': cRed50},
-      {'label': 'Refunded', 'value': '0', 'icon': Icons.refresh_rounded, 'ic': cPurple700, 'ibg': cPurple50},
+      {'label': 'Paid', 'value': '${_invoices.where((i) => i['status'] == InvoiceStatus.paid).length}', 'icon': Icons.check_circle_outline_rounded, 'ic': cEm600, 'ibg': cEm50},
+      {'label': 'Partially Paid', 'value': '${_invoices.where((i) => i['status'] == InvoiceStatus.partiallyPaid).length}', 'icon': Icons.pending_outlined, 'ic': cAmber700, 'ibg': cAmber50},
+      {'label': 'Overdue', 'value': '${_invoices.where(isOverdue).length}', 'icon': Icons.warning_amber_rounded, 'ic': cRed600, 'ibg': cRed50},
+      {'label': 'Draft', 'value': '${_invoices.where((i) => i['status'] == InvoiceStatus.draft).length}', 'icon': Icons.edit_note_rounded, 'ic': cSlate600, 'ibg': cSlate50},
     ];
 
     return StatefulBuilder(builder: (ctx, setS) {
-      final filtered = _invoices.where((inv) => activeStatus == 'All' || (inv['status'] ?? '') == activeStatus).toList();
+      final filtered = _invoices.where((inv) {
+        switch (activeStatus) {
+          case 'All':
+            return true;
+          case _overdueFilter:
+            return isOverdue(inv);
+          default:
+            return inv['status'] == activeStatus;
+        }
+      }).toList();
       return Padding(
         padding: const EdgeInsets.all(24),
         child: Column(children: [
@@ -1136,7 +1151,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                     final inv = filtered[i];
                     final name = inv['patient']?['full_name'] ?? '—';
                     final amount = inv['total_amount'] ?? 0;
-                    final status = inv['status'] ?? 'Draft';
+                    final status = inv['status'] ?? InvoiceStatus.draft;
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       child: Row(children: [
@@ -1324,10 +1339,19 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   // ─── SHARED HELPERS ──────────────────────────────────
   Widget _statusPill(String status) {
     final Map<String, List<Color>> pm = {
-      'scheduled': [cSlate100, cSlate600], 'arrived': [cBlue50, cBlue700], 'waiting': [cAmber50, cAmber700],
-      'in consultation': [cAmber50, cAmber700], 'completed': [cEm50, cEm700], 'cancelled': [cRed50, cRed600],
-      'no show': [cSlate100, cSlate600], 'paid': [cEm50, cEm700], 'partial': [cAmber50, cAmber700],
-      'draft': [cSlate100, cSlate600], 'active': [cEm50, cEm700], 'follow-up': [cPurple50, cPurple700],
+      AppointmentStatus.scheduled.toLowerCase(): [cSlate100, cSlate600],
+      AppointmentStatus.arrived.toLowerCase(): [cBlue50, cBlue700],
+      AppointmentStatus.inConsultation.toLowerCase(): [cAmber50, cAmber700],
+      AppointmentStatus.completed.toLowerCase(): [cEm50, cEm700],
+      AppointmentStatus.cancelled.toLowerCase(): [cRed50, cRed600],
+      AppointmentStatus.noShow.toLowerCase(): [cSlate100, cSlate600],
+      InvoiceStatus.paid.toLowerCase(): [cEm50, cEm700],
+      InvoiceStatus.partiallyPaid.toLowerCase(): [cAmber50, cAmber700],
+      InvoiceStatus.draft.toLowerCase(): [cSlate100, cSlate600],
+      InvoiceStatus.issued.toLowerCase(): [cBlue50, cBlue700],
+      VisitType.followUp.toLowerCase(): [cPurple50, cPurple700],
+      VisitType.newVisit.toLowerCase(): [cEm50, cEm700],
+      VisitType.walkIn.toLowerCase(): [cOrange50, cOrange500],
     };
     final colors = pm[status.toLowerCase()] ?? [cSlate100, cMuted];
     return Container(

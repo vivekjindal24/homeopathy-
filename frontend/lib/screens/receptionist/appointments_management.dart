@@ -311,10 +311,16 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                       ? null
                       : () async {
                           if (formKey.currentState!.validate() && selectedPatientId != null) {
+                            if (_apiService.userId == null) {
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                const SnackBar(content: Text('Please log in to book appointments.'), backgroundColor: Colors.red),
+                              );
+                              return;
+                            }
                             try {
                               await _apiService.createAppointment({
                                 'patient_id': selectedPatientId,
-                                'doctor_id': _apiService.userId ?? "doctor-uuid-placeholder",
+                                'doctor_id': _apiService.userId!,
                                 'clinic_id': widget.clinicId,
                                 'appt_date': dateController.text.trim(),
                                 'appt_time': timeController.text.trim(),
@@ -814,6 +820,12 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
 
   Future<void> _createWalkInAppointment() async {
     if (_selectedPatient == null) return;
+    if (_apiService.userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to create walk-in appointments.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
     final timeStr = "${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}";
     final dateStr = DateTime.now().toIso8601String().split('T')[0];
 
@@ -821,7 +833,7 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
     try {
       final res = await _apiService.createAppointment({
         'patient_id': _selectedPatient!['patient_id'],
-        'doctor_id': _apiService.userId ?? "doctor-uuid-placeholder",
+        'doctor_id': _apiService.userId!,
         'clinic_id': widget.clinicId,
         'appt_date': dateStr,
         'appt_time': timeStr,

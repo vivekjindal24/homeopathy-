@@ -40,7 +40,7 @@ class _PatientPortalHomeState extends State<PatientPortalHome> {
   final _mobileCtrl = TextEditingController();
   DateTime? _dob;
   String _gender = 'M';
-  String _visitType = 'New';
+  String _visitType = VisitType.newVisit;
 
   // Login flow
   String _loginStage = 'mobile'; // mobile | otp
@@ -579,7 +579,7 @@ class _PatientPortalHomeState extends State<PatientPortalHome> {
               items: VisitType.all
                   .map((t) => DropdownMenuItem(value: t, child: Text(t)))
                   .toList(),
-              onChanged: (v) => setState(() => _visitType = v ?? 'New'),
+              onChanged: (v) => setState(() => _visitType = v ?? VisitType.newVisit),
             ),
             const SizedBox(height: 20),
             Row(

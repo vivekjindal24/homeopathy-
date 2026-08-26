@@ -1150,7 +1150,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       _statChip('Total', (appt['total'] as num?) ?? 0, cFg, cMutedBg),
                       _statChip(AppointmentStatus.completed.toLowerCase().capitalize(), (appt['completed'] as num?) ?? 0, AppColors.green600, AppColors.green100),
                       _statChip(AppointmentStatus.cancelled.toLowerCase().capitalize(), (appt['cancelled'] as num?) ?? 0, AppColors.red600, AppColors.red100),
-                      _statChip('No-show', (appt['no_show'] as num?) ?? 0, AppColors.amber700, AppColors.amber100),
+                      _statChip(AppointmentStatus.noShow.toLowerCase().capitalize(), (appt['no_show'] as num?) ?? 0, AppColors.amber700, AppColors.amber100),
                       _statChip(AppointmentStatus.scheduled.toLowerCase().capitalize(), (appt['scheduled'] as num?) ?? 0, AppColors.slate400, AppColors.slate200),
                       _statChip(AppointmentStatus.confirmed.toLowerCase().capitalize(), (appt['confirmed'] as num?) ?? 0, AppColors.blue700, AppColors.blue100),
                     ],
