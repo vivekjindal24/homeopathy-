@@ -60,6 +60,8 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   List<dynamic> _appointments = [];
   List<dynamic> _patients = [];
   List<dynamic> _invoices = [];
+  List<dynamic> _notifications = [];
+  List<dynamic> _auditLogs = [];
   Map<String, dynamic>? _activeConsultAppt;
   String _searchQ = '';
   String _billingFilter = 'All';
@@ -143,6 +145,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         _api.getPatients(),
         _api.getInvoices(),
         _api.getAuditLogs(),
+        _api.getNotifications().catchError((_) => <dynamic>[]),
       ]);
       if (!mounted) return;
       final kpis = results[0] as Map<String, dynamic>;
@@ -159,6 +162,8 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         _appointments = appts;
         _patients = results[2] as List<dynamic>;
         _invoices = results[3] as List<dynamic>;
+        _auditLogs = results[4] as List<dynamic>;
+        _notifications = results[5] as List<dynamic>;
         _activeConsultAppt = activeConsult;
         _lastFetched = DateTime.now();
         _loading = false;
@@ -346,8 +351,14 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         Text(dateStr, style: const TextStyle(fontSize: 11, color: cMuted)),
         const SizedBox(width: 8),
         Stack(alignment: Alignment.center, children: [
-          IconButton(onPressed: () => setState(() => _tab = 'notifications'), icon: const Icon(Icons.notifications_none_rounded, size: 20, color: cMuted)),
-          Positioned(top: 8, right: 8, child: Container(width: 7, height: 7, decoration: BoxDecoration(color: cRed600, borderRadius: BorderRadius.circular(100), border: Border.all(color: Colors.white, width: 1.2)))),
+          IconButton(onPressed: () => setState(() => _tab = 'notifications'), icon: Icon(Icons.notifications_none_rounded, size: 20, color: _notifications.isNotEmpty ? cPrimary : cMuted)),
+          if (_notifications.isNotEmpty)
+            Positioned(top: 8, right: 8, child: Container(
+              constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              decoration: BoxDecoration(color: cRed600, borderRadius: BorderRadius.circular(100), border: Border.all(color: Colors.white, width: 1.2)),
+              child: Center(child: Text('${_notifications.length}', style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w700, color: Colors.white))),
+            )),
         ]),
         const SizedBox(width: 4),
         InkWell(
@@ -1182,12 +1193,110 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   Widget _buildPaymentsTab()   => _buildPlaceholderTab('Payments / Refunds', Icons.account_balance_wallet_outlined, 'Payment records and refund requests');
   Widget _buildInventoryTab()  => _buildPlaceholderTab('Inventory', Icons.inventory_2_outlined, 'Pharmacy stock & batch management');
   Widget _buildExpensesTab()   => _buildPlaceholderTab('Expenses', Icons.trending_down_rounded, 'Operational ledger & expense tracking');
-  Widget _buildNotificationsTab() => _buildPlaceholderTab('Notifications', Icons.notifications_none_rounded, 'System alerts & messages');
+  Widget _buildNotificationsTab() {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Notifications', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
+            Text('System alerts & messages', style: TextStyle(fontSize: 12, color: cMuted)),
+          ]),
+          Text('${_notifications.length} total', style: const TextStyle(fontSize: 12, color: cMuted)),
+        ]),
+        const SizedBox(height: 16),
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
+            child: _notifications.isEmpty
+                ? const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.notifications_none_rounded, size: 32, color: cMuted),
+                    SizedBox(height: 8),
+                    Text('No notifications', style: TextStyle(fontSize: 12, color: cMuted)),
+                  ]))
+                : ListView.separated(
+                    itemCount: _notifications.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
+                    itemBuilder: (_, i) {
+                      final n = _notifications[i];
+                      final body = '${n['body'] ?? ''}';
+                      final channel = '${n['channel'] ?? ''}';
+                      final status = '${n['status'] ?? ''}';
+                      final createdAt = '${n['created_at'] ?? ''}';
+                      final shortTime = createdAt.length > 16 ? createdAt.substring(0, 16).replaceFirst('T', ' ') : createdAt;
+                      final iconData = channel == 'SMS' ? Icons.sms_rounded : channel == 'WhatsApp' ? Icons.chat_rounded : Icons.email_rounded;
+                      final iconColor = channel == 'SMS' ? cPrimary : channel == 'WhatsApp' ? cEm600 : cBlue700;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Container(width: 32, height: 32, decoration: BoxDecoration(color: iconColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Icon(iconData, size: 16, color: iconColor)),
+                          const SizedBox(width: 12),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(body, style: const TextStyle(fontSize: 12, color: cFg), maxLines: 3, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 4),
+                            Row(children: [
+                              Text(channel, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: iconColor)),
+                              const SizedBox(width: 8),
+                              Text('·', style: const TextStyle(fontSize: 10, color: cMuted)),
+                              const SizedBox(width: 8),
+                              Text(shortTime, style: const TextStyle(fontSize: 10, color: cMuted)),
+                            ]),
+                          ])),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: status == 'Sent' ? cEm50 : status == 'Failed' ? cRed50 : cAmber50,
+                              borderRadius: BorderRadius.circular(100),
+                            ),
+                            child: Text(status, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: status == 'Sent' ? cEm600 : status == 'Failed' ? cRed600 : cAmber700)),
+                          ),
+                        ]),
+                      );
+                    },
+                  ),
+          ),
+        ),
+      ]),
+    );
+  }
 
   Widget _buildReportsTab() {
-    final data = [12400.0, 14800.0, 11200.0, 16900.0, 18450.0, 22100.0, 9800.0];
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final maxVal = data.reduce((a, b) => a > b ? a : b);
+    // Compute real revenue data from invoices/payments already fetched
+    final Map<String, double> dailyRevenue = {};
+    for (final inv in _invoices) {
+      for (final p in (inv['payments'] ?? []) as List) {
+        final paidAt = '${p['paid_at'] ?? ''}';
+        if (paidAt.length >= 10) {
+          final day = paidAt.substring(0, 10);
+          final amt = ((p['amount'] ?? 0) as num).toDouble();
+          dailyRevenue[day] = (dailyRevenue[day] ?? 0) + amt;
+        }
+      }
+    }
+    // Sort by date descending, take last 7
+    final sortedDays = dailyRevenue.keys.toList()..sort();
+    final last7 = sortedDays.length > 7 ? sortedDays.sublist(sortedDays.length - 7) : sortedDays;
+    final data = last7.map((d) => dailyRevenue[d]!).toList();
+    final days = last7.map((d) {
+      try {
+        final dt = DateTime.parse(d);
+        return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.weekday % 7];
+      } catch (_) { return d.substring(5); }
+    }).toList();
+    final maxVal = data.isNotEmpty ? data.reduce((a, b) => a > b ? a : b) : 1.0;
+
+    // Compute total stats
+    double totalRevenue = 0;
+    int totalPaid = 0;
+    int totalPending = 0;
+    for (final inv in _invoices) {
+      final paidAmt = ((inv['paid_amount'] ?? 0) as num).toDouble();
+      final dueAmt = ((inv['due_amount'] ?? 0) as num).toDouble();
+      totalRevenue += paidAmt;
+      if (dueAmt > 0) totalPending++;
+      else totalPaid++;
+    }
+
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1196,7 +1305,15 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             Text('Reports', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
             Text('Analytics & financial oversight', style: TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          _outlineBtn('Export Report', Icons.download_rounded, () {}),
+        ]),
+        const SizedBox(height: 16),
+        // Summary cards
+        Row(children: [
+          _reportMetric('Total Collected', '₹${totalRevenue.toStringAsFixed(0)}', cEm600),
+          const SizedBox(width: 12),
+          _reportMetric('Paid Invoices', '$totalPaid', cPrimary),
+          const SizedBox(width: 12),
+          _reportMetric('Pending Invoices', '$totalPending', cAmber700),
         ]),
         const SizedBox(height: 20),
         Expanded(
@@ -1205,19 +1322,25 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Weekly Revenue', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
-                const Text('Last 7 days · in ₹', style: TextStyle(fontSize: 11, color: cMuted)),
+                const Text('Revenue Trend', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
+                const Text('Last 7 days with payments · in ₹', style: TextStyle(fontSize: 11, color: cMuted)),
                 const SizedBox(height: 16),
-                Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  for (int i = 0; i < data.length; i++) ...[
-                    Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Container(height: (data[i] / maxVal) * 200, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(6)))),
-                      const SizedBox(height: 6),
-                      Text(days[i], style: const TextStyle(fontSize: 9, color: cMuted)),
-                    ])),
-                    if (i < data.length - 1) const SizedBox(width: 6),
-                  ],
-                ])),
+                if (data.isEmpty)
+                  const Expanded(child: Center(child: Text('No revenue data yet', style: TextStyle(fontSize: 12, color: cMuted))))
+                else
+                  Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    for (int i = 0; i < data.length; i++) ...[
+                      Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                        Tooltip(
+                          message: '₹${data[i].toStringAsFixed(0)}',
+                          child: Container(height: (data[i] / maxVal) * 200, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(6)))),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(days[i], style: const TextStyle(fontSize: 9, color: cMuted)),
+                      ])),
+                      if (i < data.length - 1) const SizedBox(width: 6),
+                    ],
+                  ])),
               ]),
             )),
             const SizedBox(width: 16),
@@ -1228,56 +1351,85 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     );
   }
 
+  Widget _reportMetric(String label, String value, Color color) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontSize: 10, color: cMuted)),
+        const SizedBox(height: 4),
+        Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: color)),
+      ]),
+    ),
+  );
+
   Widget _buildAuditTab() {
-    final logs = [
-      {'time': '10:52 AM', 'action': 'STATUS_CHANGE', 'entity': 'Appointment', 'actor': 'Dr. Verma', 'detail': 'Status: In Consultation → Completed'},
-      {'time': '11:00 AM', 'action': 'INVOICE_CREATED', 'entity': 'Invoice INV-2241', 'actor': 'Priya Sharma', 'detail': 'Amount: ₹1,200 · Patient: Anita Verma'},
-      {'time': '09:30 AM', 'action': 'PATIENT_REGISTERED', 'entity': 'Patient VHC-2042', 'actor': 'Priya Sharma', 'detail': 'Raj Patel registered'},
-      {'time': '09:00 AM', 'action': 'LOGIN', 'entity': 'System', 'actor': 'Dr. Verma', 'detail': 'Login from 192.168.1.5'},
-    ];
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Audit Logs', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
-        const Text('Immutable event trail', style: TextStyle(fontSize: 12, color: cMuted)),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Audit Logs', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
+            Text('Immutable event trail', style: TextStyle(fontSize: 12, color: cMuted)),
+          ]),
+          Text('${_auditLogs.length} entries', style: const TextStyle(fontSize: 12, color: cMuted)),
+        ]),
         const SizedBox(height: 16),
         Expanded(
           child: Container(
             decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
-            child: Column(children: [
-              Container(
-                color: cMutedBg.withOpacity(0.6),
-                child: const Row(children: [
-                  SizedBox(width: 16),
-                  Expanded(flex: 1, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Time', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
-                  Expanded(flex: 2, child: Text('Action', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 2, child: Text('Entity', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 2, child: Text('Actor', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 3, child: Text('Detail', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  SizedBox(width: 16),
-                ]),
-              ),
-              const Divider(height: 1, color: cBorder),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: logs.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
-                  itemBuilder: (_, i) {
-                    final log = logs[i];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      child: Row(children: [
-                        Expanded(flex: 1, child: Text(log['time']!, style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cMuted))),
-                        Expanded(flex: 2, child: Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3), decoration: BoxDecoration(color: cSlate100, borderRadius: BorderRadius.circular(4)), child: Text(log['action']!, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, fontFamily: 'monospace', color: cSlate600)))),
-                        Expanded(flex: 2, child: Text(log['entity']!, style: const TextStyle(fontSize: 11, color: cFg))),
-                        Expanded(flex: 2, child: Text(log['actor']!, style: const TextStyle(fontSize: 11, color: cPrimary))),
-                        Expanded(flex: 3, child: Text(log['detail']!, style: const TextStyle(fontSize: 11, color: cMuted))),
+            child: _auditLogs.isEmpty
+                ? const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.verified_user_outlined, size: 32, color: cMuted),
+                    SizedBox(height: 8),
+                    Text('No audit logs', style: TextStyle(fontSize: 12, color: cMuted)),
+                  ]))
+                : Column(children: [
+                    Container(
+                      color: cMutedBg.withOpacity(0.6),
+                      child: const Row(children: [
+                        SizedBox(width: 16),
+                        Expanded(flex: 1, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Time', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
+                        Expanded(flex: 2, child: Text('Action', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                        Expanded(flex: 2, child: Text('Entity', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                        Expanded(flex: 2, child: Text('Actor', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                        Expanded(flex: 3, child: Text('Detail', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                        SizedBox(width: 16),
                       ]),
-                    );
-                  },
-                ),
-              ),
-            ]),
+                    ),
+                    const Divider(height: 1, color: cBorder),
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: _auditLogs.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
+                        itemBuilder: (_, i) {
+                          final log = _auditLogs[i];
+                          final ts = '${log['timestamp'] ?? ''}';
+                          final timeStr = ts.length > 16 ? ts.substring(11, 16) : ts;
+                          final action = '${log['action'] ?? ''}';
+                          final entityType = '${log['entity_type'] ?? ''}';
+                          final entityId = '${log['entity_id'] ?? ''}';
+                          final changes = log['changes_json'] as Map<String, dynamic>?;
+                          final after = changes?['after'] as Map<String, dynamic>?;
+                          String detail = '';
+                          if (after != null && after.isNotEmpty) {
+                            final keys = after.keys.where((k) => k != 'password_hash' && k != 'password').take(2).toList();
+                            detail = keys.map((k) => '$k: ${after[k]}').join(', ');
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            child: Row(children: [
+                              Expanded(flex: 1, child: Text(timeStr, style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cMuted))),
+                              Expanded(flex: 2, child: Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3), decoration: BoxDecoration(color: cSlate100, borderRadius: BorderRadius.circular(4)), child: Text(action, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, fontFamily: 'monospace', color: cSlate600)))),
+                              Expanded(flex: 2, child: Text(entityType, style: const TextStyle(fontSize: 11, color: cFg))),
+                              Expanded(flex: 2, child: Text(_shortId(entityId), style: const TextStyle(fontSize: 11, color: cPrimary, fontFamily: 'monospace'))),
+                              Expanded(flex: 3, child: Text(detail, style: const TextStyle(fontSize: 11, color: cMuted), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                            ]),
+                          );
+                        },
+                      ),
+                    ),
+                  ]),
           ),
         ),
       ]),

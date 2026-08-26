@@ -94,6 +94,8 @@ class Appointment(Base):
     notes = Column(String(1000), nullable=True)
     cancel_reason = Column(String(500), nullable=True)
     token_number = Column(Integer, nullable=True)
+    waiting_started_at = Column(DateTime, nullable=True)
+    consultation_started_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -167,6 +169,23 @@ class AuditLog(Base):
     performed_by = Column(String(36), ForeignKey("users.user_id"), nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     changes_json = Column(JSON, nullable=False)
+
+
+class Medicine(Base):
+    __tablename__ = "medicines"
+
+    medicine_id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(200), nullable=False)
+    manufacturer = Column(String(200), nullable=True)
+    batch_number = Column(String(100), nullable=True)
+    quantity = Column(Integer, nullable=False, default=0)
+    unit_price = Column(Numeric(10, 2), nullable=False, default=0)
+    expiry_date = Column(String(20), nullable=True)  # YYYY-MM-DD
+    low_stock_threshold = Column(Integer, nullable=False, default=10)
+    clinic_id = Column(String(36), ForeignKey("clinics.clinic_id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    clinic = relationship("Clinic")
 
 
 class OTPCode(Base):

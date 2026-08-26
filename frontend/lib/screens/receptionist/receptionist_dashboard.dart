@@ -63,6 +63,8 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   List<dynamic> _appointments = [];
   List<dynamic> _patients = [];
   List<dynamic> _invoices = [];
+  List<dynamic> _notifications = [];
+  bool _showNotifPanel = false;
 
   final _navGroups = [
     {
@@ -124,12 +126,13 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         _clinicId = clinics.first['clinic_id'];
       }
       if (_clinicId != null) {
-        // Parallel fetches for KPIs + lists
+        // Parallel fetches for KPIs + lists + notifications
         final results = await Future.wait([
           _api.getKpis(_clinicId!, _date),
           _api.getAppointments(clinicId: _clinicId, date: _date),
           _api.getPatients(),
           _api.getInvoices(),
+          _api.getNotifications().catchError((_) => <dynamic>[]),
         ]);
         if (!mounted) return;
         setState(() {
@@ -137,6 +140,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           _appointments = results[1] as List<dynamic>;
           _patients = results[2] as List<dynamic>;
           _invoices = results[3] as List<dynamic>;
+          _notifications = results[4] as List<dynamic>;
           _loading = false;
         });
       } else {
@@ -228,14 +232,19 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         children: [
           _buildSidebar(),
           Expanded(
-            child: Column(
+            child: Stack(
               children: [
-                _buildTopBar(),
-                Expanded(child: _loading
-                    ? const Center(child: CircularProgressIndicator(color: cPrimary))
-                    : _error != null
-                        ? _buildErrorState()
-                        : _buildBody()),
+                Column(
+                  children: [
+                    _buildTopBar(),
+                    Expanded(child: _loading
+                        ? const Center(child: CircularProgressIndicator(color: cPrimary))
+                        : _error != null
+                            ? _buildErrorState()
+                            : _buildBody()),
+                  ],
+                ),
+                if (_showNotifPanel) _buildNotifPanel(),
               ],
             ),
           ),
@@ -436,6 +445,24 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         const SizedBox(width: 12),
         Text(dateStr, style: const TextStyle(fontSize: 11, color: cMuted)),
         const SizedBox(width: 8),
+        // Notification bell
+        Stack(alignment: Alignment.center, children: [
+          IconButton(
+            onPressed: () => setState(() => _showNotifPanel = !_showNotifPanel),
+            icon: Icon(
+              _showNotifPanel ? Icons.notifications_rounded : Icons.notifications_none_rounded,
+              size: 20, color: _notifications.isNotEmpty ? cPrimary : cMuted,
+            ),
+          ),
+          if (_notifications.isNotEmpty)
+            Positioned(top: 6, right: 6, child: Container(
+              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(color: cRed600, borderRadius: BorderRadius.circular(100), border: Border.all(color: Colors.white, width: 1.2)),
+              child: Center(child: Text('${_notifications.length}', style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w700, color: Colors.white))),
+            )),
+        ]),
+        const SizedBox(width: 4),
         // Avatar chip
         InkWell(
           onTap: _signOut,
@@ -976,7 +1003,8 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     final completed  = _appointments.where((a) => a['status'] == QueueColumn.completed).toList();
     final noShow     = _appointments.where((a) => a['status'] == QueueColumn.noShow).toList();
     final activeC    = consult.isNotEmpty ? consult.first : null;
-    final avgWait    = waiting.isNotEmpty ? '${(waiting.length * 8)} min avg' : '0 min';
+    final avgWaitMin = (_kpis['avg_wait_minutes'] as num?)?.toDouble();
+    final avgWait    = avgWaitMin != null && avgWaitMin > 0 ? '${avgWaitMin.toStringAsFixed(0)} min' : '—';
 
     final summaryStats = [
       {'label': 'Total Waiting', 'value': '${waiting.length}', 'icon': Icons.format_list_numbered_rounded, 'color': cAmber700},
@@ -1488,9 +1516,28 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   }
 
   Widget _buildRevenueChart() {
-    final data = [12400.0, 14800.0, 11200.0, 16900.0, 18450.0, 22100.0, 9800.0];
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final maxVal = data.reduce((a, b) => a > b ? a : b);
+    // Compute real revenue from invoices/payments already fetched
+    final Map<String, double> dailyRevenue = {};
+    for (final inv in _invoices) {
+      for (final p in (inv['payments'] as List? ?? [])) {
+        final paidAt = '${p['paid_at'] ?? ''}';
+        if (paidAt.length >= 10) {
+          final day = paidAt.substring(0, 10);
+          final amt = _parseAmount(p['amount']);
+          dailyRevenue[day] = (dailyRevenue[day] ?? 0) + amt;
+        }
+      }
+    }
+    final sortedDays = dailyRevenue.keys.toList()..sort();
+    final last7 = sortedDays.length > 7 ? sortedDays.sublist(sortedDays.length - 7) : sortedDays;
+    final data = last7.map((d) => dailyRevenue[d]!).toList();
+    final days = last7.map((d) {
+      try {
+        final dt = DateTime.parse(d);
+        return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.weekday % 7];
+      } catch (_) { return d.substring(5); }
+    }).toList();
+    final maxVal = data.isNotEmpty ? data.reduce((a, b) => a > b ? a : b) : 1.0;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
@@ -1509,7 +1556,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         const SizedBox(height: 20),
         SizedBox(
           height: 160,
-          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          child: data.isEmpty
+              ? const Center(child: Text('No revenue data yet', style: TextStyle(fontSize: 12, color: cMuted)))
+              : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             for (int i = 0; i < data.length; i++) ...[
               Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
                 Container(height: (data[i] / maxVal) * 140, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))),
@@ -1822,6 +1871,61 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         );
       }),
     ));
+  }
+
+  // ─── NOTIFICATION PANEL ─────────────────────────────
+  Widget _buildNotifPanel() {
+    return Positioned(
+      top: 0, right: 24,
+      child: Material(
+        elevation: 8,
+        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)),
+        child: Container(
+          width: 340,
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
+          decoration: BoxDecoration(color: cCard, borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)), border: Border.all(color: cBorder)),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
+              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text('Notifications (${_notifications.length})', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
+                IconButton(icon: const Icon(Icons.close_rounded, size: 16, color: cMuted), onPressed: () => setState(() => _showNotifPanel = false)),
+              ]),
+            ),
+            const Divider(height: 1, color: cBorder),
+            if (_notifications.isEmpty)
+              const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No notifications', style: TextStyle(fontSize: 12, color: cMuted))))
+            else
+              Flexible(child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: _notifications.length,
+                separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
+                itemBuilder: (_, i) {
+                  final n = _notifications[i];
+                  final body = '${n['body'] ?? ''}';
+                  final channel = '${n['channel'] ?? ''}';
+                  final createdAt = '${n['created_at'] ?? ''}';
+                  final shortTime = createdAt.length > 16 ? createdAt.substring(11, 16) : '';
+                  final iconData = channel == 'SMS' ? Icons.sms_rounded : channel == 'WhatsApp' ? Icons.chat_rounded : Icons.email_rounded;
+                  final iconColor = channel == 'SMS' ? cPrimary : channel == 'WhatsApp' ? cEm600 : cBlue700;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Container(width: 28, height: 28, decoration: BoxDecoration(color: iconColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Icon(iconData, size: 14, color: iconColor)),
+                      const SizedBox(width: 10),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(body, style: const TextStyle(fontSize: 11, color: cFg), maxLines: 2, overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 3),
+                        Text('$channel · $shortTime', style: const TextStyle(fontSize: 9, color: cMuted)),
+                      ])),
+                    ]),
+                  );
+                },
+              )),
+          ]),
+        ),
+      ),
+    );
   }
 
   // ─── HELPER WIDGETS ──────────────────────────────────

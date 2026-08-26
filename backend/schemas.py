@@ -159,13 +159,54 @@ class PatientResponse(ORMModel):
     created_at: datetime
 
 
-# --- Medicine Schema ---
+# --- Prescription Medicine Schema (in-RX, not inventory) ---
 class MedicineSchema(BaseModel):
     name: str = Field(min_length=1)
     potency: str = Field(min_length=1)
     dosage: str = Field(min_length=1)
     frequency: str = Field(min_length=1)
     duration: str = Field(min_length=1)
+
+
+# --- Inventory Medicine Schemas ---
+class MedicineCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    manufacturer: Optional[str] = None
+    batch_number: Optional[str] = None
+    quantity: int = Field(ge=0, default=0)
+    unit_price: Decimal = Field(ge=0, default=Decimal("0.00"), max_digits=10, decimal_places=2)
+    expiry_date: Optional[str] = None
+    low_stock_threshold: int = Field(ge=0, default=10)
+    clinic_id: str
+
+
+class MedicineUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    manufacturer: Optional[str] = None
+    batch_number: Optional[str] = None
+    quantity: Optional[int] = Field(default=None, ge=0)
+    unit_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+    expiry_date: Optional[str] = None
+    low_stock_threshold: Optional[int] = Field(default=None, ge=0)
+
+
+class MedicineResponse(ORMModel):
+    medicine_id: str
+    name: str
+    manufacturer: Optional[str]
+    batch_number: Optional[str]
+    quantity: int
+    unit_price: Decimal
+    expiry_date: Optional[str]
+    low_stock_threshold: int
+    clinic_id: str
+    created_at: datetime
+
+
+class InventoryStatsResponse(BaseModel):
+    low_stock_count: int
+    near_expiry_count: int
+    total_medicines: int
 
 
 # --- Prescription Schemas ---
@@ -296,6 +337,7 @@ class KpisResponse(BaseModel):
     active_queue: int
     today_revenue: Decimal
     pending_dues: Decimal
+    avg_wait_minutes: float = 0.0
     low_stock_alert: int
 
 

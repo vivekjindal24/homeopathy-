@@ -2,6 +2,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, date
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status, Query
@@ -94,6 +95,29 @@ def seed_data():
             if not from_env:
                 print(f"  {email}: {pwd}")
         print("=" * 60)
+
+        # --- Seed Medicines ---
+        seed_medicines = [
+            ("Arnica Montana 200C", "SBL", "ARN-2026-001", 150, 120.00, "2028-06-15", 10),
+            ("Belladonna 30C", "Dr. Reckeweg", "BEL-2026-002", 6, 85.00, "2026-09-20", 10),
+            ("Nux Vomica 1M", "Boiron", "NVX-2025-003", 4, 200.00, "2026-03-30", 10),
+            ("Sulphur 6C", "Schwabe", "SUL-2027-004", 200, 90.00, "2027-11-01", 20),
+            ("Rhus Tox 30C", "SBL", "RTX-2025-005", 5, 75.00, "2026-02-10", 10),
+            ("Pulsatilla 200C", "Dr. Reckeweg", "PUL-2027-006", 80, 140.00, "2027-04-18", 10),
+            ("Bryonia Alba 30C", "Boiron", "BRY-2026-007", 3, 95.00, "2026-05-25", 8),
+            ("Lycopodium 200C", "SBL", "LYC-2026-008", 120, 110.00, "2027-08-30", 15),
+            ("Calcarea Carb 6C", "Schwabe", "CCC-2027-009", 50, 65.00, "2027-12-20", 10),
+            ("Natrum Mur 30C", "Dr. Reckeweg", "NMU-2025-010", 9, 80.00, "2026-01-15", 10),
+        ]
+        for clinic in [clinic_a, clinic_b]:
+            for name, mfr, batch, qty, price, exp, threshold in seed_medicines:
+                db.add(models.Medicine(
+                    name=name, manufacturer=mfr, batch_number=batch,
+                    quantity=qty, unit_price=Decimal(str(price)),
+                    expiry_date=exp, low_stock_threshold=threshold,
+                    clinic_id=clinic.clinic_id,
+                ))
+        db.commit()
     finally:
         db.close()
 
@@ -315,7 +339,7 @@ def get_audit_logs(entity_type: Optional[str] = None, action: Optional[str] = No
 # --- Notifications ---
 @app.get("/api/v1/notifications", response_model=list[schemas.NotificationResponse])
 def list_notifications(db: Session = Depends(get_db),
-                       current_user: models.User = Depends(auth.require_admin)):
+                       current_user: models.User = Depends(auth.require_any_user)):
     return crud.get_notifications(db)
 
 
@@ -499,3 +523,41 @@ def portal_reschedule(appt_id: str, body: schemas.AppointmentReschedule, db: Ses
 def portal_my_invoices(db: Session = Depends(get_db),
                        patient: models.Patient = Depends(auth.get_current_patient)):
     return crud.get_invoices(db, patient.patient_id)
+
+
+# --- Inventory Routes ---
+@app.post("/api/v1/inventory", response_model=schemas.MedicineResponse)
+def create_medicine(med: schemas.MedicineCreate, db: Session = Depends(get_db),
+                    current_user: models.User = Depends(auth.require_receptionist)):
+    clinic = crud.get_clinic(db, med.clinic_id)
+    if not clinic:
+        raise HTTPException(status_code=400, detail="Invalid clinic")
+    return crud.create_medicine(db, med, current_user.user_id)
+
+
+@app.get("/api/v1/inventory/stats", response_model=schemas.InventoryStatsResponse)
+def get_inventory_stats(clinic_id: str, db: Session = Depends(get_db),
+                        current_user: models.User = Depends(auth.require_any_user)):
+    return crud.get_inventory_stats(db, clinic_id)
+
+
+@app.get("/api/v1/inventory", response_model=list[schemas.MedicineResponse])
+def list_medicines(clinic_id: Optional[str] = None, search: Optional[str] = None,
+                   low_stock: Optional[bool] = None, near_expiry: Optional[bool] = None,
+                   db: Session = Depends(get_db),
+                   current_user: models.User = Depends(auth.require_any_user)):
+    return crud.get_medicines(db, clinic_id, search, low_stock, near_expiry)
+
+
+@app.put("/api/v1/inventory/{medicine_id}", response_model=schemas.MedicineResponse)
+def update_medicine(medicine_id: str, data: schemas.MedicineUpdate,
+                    db: Session = Depends(get_db),
+                    current_user: models.User = Depends(auth.require_receptionist)):
+    return crud.update_medicine(db, medicine_id, data, current_user.user_id)
+
+
+@app.post("/api/v1/inventory/{medicine_id}/stock-inward", response_model=schemas.MedicineResponse)
+def stock_inward(medicine_id: str, body: dict, db: Session = Depends(get_db),
+                 current_user: models.User = Depends(auth.require_receptionist)):
+    qty = body.get("quantity", 0)
+    return crud.stock_inward(db, medicine_id, qty, current_user.user_id)

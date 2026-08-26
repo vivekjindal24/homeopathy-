@@ -712,7 +712,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                                     final styleColor = styles[status] ?? const Color(0xFF64748B);
 
                                     return Container(
-                                      margin: const.only(bottom: 8),
+                                      margin: const EdgeInsets.only(bottom: 8),
                                       padding: const EdgeInsets.all(8),
                                       decoration: BoxDecoration(
                                         color: styleColor.withOpacity(0.08),

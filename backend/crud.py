@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy.orm import Session, joinedload, selectinload
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_
 
 import models, schemas, auth
 
@@ -317,6 +318,11 @@ def update_appointment_status(db: Session, appt_id: str, status_update: str,
             )
 
     before = model_to_dict(appt)
+    now = datetime.utcnow()
+    if status_update == "Arrived":
+        appt.waiting_started_at = now
+    elif status_update == "In Consultation":
+        appt.consultation_started_at = now
     appt.status = status_update
     if status_update == "Cancelled":
         appt.cancel_reason = reason
@@ -527,6 +533,39 @@ def get_notifications(db: Session) -> list[models.NotificationLog]:
 
 
 # --- Dashboard KPIs ---
+def get_avg_wait_minutes(db: Session, clinic_id: str, date_str: str) -> float:
+    """Average wait time in minutes for completed/in-progress appointments on a given date.
+
+    Wait duration = consultation_started_at - waiting_started_at.
+    Only includes appointments where both timestamps are set.
+    For currently waiting patients (no consultation_started_at yet), uses now().
+    """
+    d = date.fromisoformat(date_str)
+    appts = db.query(models.Appointment).filter(
+        models.Appointment.clinic_id == clinic_id,
+        models.Appointment.appt_date == d,
+        models.Appointment.waiting_started_at.isnot(None),
+    ).all()
+    if not appts:
+        return 0.0
+    durations = []
+    now = datetime.utcnow()
+    for a in appts:
+        start = a.waiting_started_at
+        if a.consultation_started_at is not None:
+            end = a.consultation_started_at
+        elif a.status == "Arrived":
+            end = now  # still waiting, count elapsed time
+        else:
+            continue  # no valid end point
+        diff = (end - start).total_seconds() / 60.0
+        if diff >= 0:
+            durations.append(diff)
+    if not durations:
+        return 0.0
+    return round(sum(durations) / len(durations), 1)
+
+
 def get_dashboard_kpis(db: Session, clinic_id: str, date_str: str) -> dict:
     d = date.fromisoformat(date_str)
     today_patients = db.query(models.Appointment.patient_id).filter(
@@ -556,12 +595,18 @@ def get_dashboard_kpis(db: Session, clinic_id: str, date_str: str) -> dict:
     ).all()
     pending_dues = sum((_q(i.due_amount) for i in pending_dues_rows), Decimal("0.00"))
 
+    low_stock_count = db.query(models.Medicine).filter(
+        models.Medicine.clinic_id == clinic_id,
+        models.Medicine.quantity < models.Medicine.low_stock_threshold,
+    ).count()
+
     return {
         "today_patients": today_patients,
         "active_queue": active_queue,
         "today_revenue": today_revenue,
         "pending_dues": pending_dues,
-        "low_stock_alert": 0,  # inventory out of scope (§2.2); placeholder kept for UI contract
+        "avg_wait_minutes": get_avg_wait_minutes(db, clinic_id, date_str),
+        "low_stock_alert": low_stock_count,
     }
 
 
@@ -627,3 +672,100 @@ def get_patient_appointments(db: Session, patient_id: str) -> list[models.Appoin
     return db.query(models.Appointment).options(joinedload(models.Appointment.patient)).filter(
         models.Appointment.patient_id == patient_id
     ).order_by(models.Appointment.appt_date.desc(), models.Appointment.appt_time.asc()).all()
+
+
+# --- Inventory CRUD ---
+NEAR_EXPIRY_DAYS = 90
+
+
+def create_medicine(db: Session, med: schemas.MedicineCreate, user_id: str) -> models.Medicine:
+    db_med = models.Medicine(
+        name=med.name,
+        manufacturer=med.manufacturer,
+        batch_number=med.batch_number,
+        quantity=med.quantity,
+        unit_price=_q(med.unit_price),
+        expiry_date=med.expiry_date,
+        low_stock_threshold=med.low_stock_threshold,
+        clinic_id=med.clinic_id,
+    )
+    db.add(db_med)
+    db.commit()
+    db.refresh(db_med)
+    log_audit(db, "Medicine", db_med.medicine_id, "CREATE", user_id, after_data=model_to_dict(db_med))
+    return db_med
+
+
+def get_medicines(db: Session, clinic_id: str = None, search: str = None,
+                  low_stock: bool = None, near_expiry: bool = None) -> list[models.Medicine]:
+    query = db.query(models.Medicine)
+    if clinic_id:
+        query = query.filter(models.Medicine.clinic_id == clinic_id)
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                models.Medicine.name.ilike(like),
+                models.Medicine.manufacturer.ilike(like),
+                models.Medicine.batch_number.ilike(like),
+            )
+        )
+    today = date.today()
+    if low_stock:
+        query = query.filter(models.Medicine.quantity <= models.Medicine.low_stock_threshold)
+    if near_expiry:
+        cutoff = (today + timedelta(days=NEAR_EXPIRY_DAYS)).isoformat()
+        query = query.filter(
+            models.Medicine.expiry_date.isnot(None),
+            models.Medicine.expiry_date <= cutoff,
+        )
+    return query.order_by(models.Medicine.name.asc()).all()
+
+
+def update_medicine(db: Session, medicine_id: str, data: schemas.MedicineUpdate,
+                    user_id: str) -> models.Medicine:
+    med = db.query(models.Medicine).filter(models.Medicine.medicine_id == medicine_id).first()
+    if not med:
+        raise HTTPException(status_code=404, detail="Medicine not found")
+    before = model_to_dict(med)
+    for k, v in data.model_dump(exclude_unset=True).items():
+        if k == "unit_price":
+            v = _q(v)
+        setattr(med, k, v)
+    db.commit()
+    db.refresh(med)
+    log_audit(db, "Medicine", med.medicine_id, "UPDATE", user_id,
+              before_data=before, after_data=model_to_dict(med))
+    return med
+
+
+def stock_inward(db: Session, medicine_id: str, quantity: int, user_id: str) -> models.Medicine:
+    med = db.query(models.Medicine).filter(models.Medicine.medicine_id == medicine_id).first()
+    if not med:
+        raise HTTPException(status_code=404, detail="Medicine not found")
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be positive")
+    before = model_to_dict(med)
+    med.quantity += quantity
+    db.commit()
+    db.refresh(med)
+    log_audit(db, "Medicine", med.medicine_id, "UPDATE", user_id,
+              before_data=before, after_data=model_to_dict(med))
+    return med
+
+
+def get_inventory_stats(db: Session, clinic_id: str) -> dict:
+    query = db.query(models.Medicine).filter(models.Medicine.clinic_id == clinic_id)
+    today = date.today()
+    cutoff = (today + timedelta(days=NEAR_EXPIRY_DAYS)).isoformat()
+    all_meds = query.all()
+    low_stock_count = sum(1 for m in all_meds if m.quantity <= m.low_stock_threshold)
+    near_expiry_count = sum(
+        1 for m in all_meds
+        if m.expiry_date and m.expiry_date <= cutoff
+    )
+    return {
+        "low_stock_count": low_stock_count,
+        "near_expiry_count": near_expiry_count,
+        "total_medicines": len(all_meds),
+    }

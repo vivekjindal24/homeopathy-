@@ -390,4 +390,26 @@ class ApiService {
           body: {'appt_date': date, 'appt_time': time});
 
   Future<List<dynamic>> portalMyInvoices() => _sendList('GET', '/portal/me/invoices');
+
+  // --- Inventory ---
+  Future<List<dynamic>> getInventory({String? clinicId, String? search, bool? lowStock, bool? nearExpiry}) {
+    final q = <String, String>{};
+    if (clinicId != null) q['clinic_id'] = clinicId;
+    if (search != null && search.isNotEmpty) q['search'] = search;
+    if (lowStock == true) q['low_stock'] = 'true';
+    if (nearExpiry == true) q['near_expiry'] = 'true';
+    return _sendList('GET', '/inventory', query: q);
+  }
+
+  Future<Map<String, dynamic>> createMedicine(Map<String, dynamic> data) =>
+      _sendMap('POST', '/inventory', body: data);
+
+  Future<Map<String, dynamic>> updateMedicine(String id, Map<String, dynamic> data) =>
+      _sendMap('PUT', '/inventory/$id', body: data);
+
+  Future<Map<String, dynamic>> stockInward(String id, int quantity) =>
+      _sendMap('POST', '/inventory/$id/stock-inward', body: {'quantity': quantity});
+
+  Future<Map<String, dynamic>> getInventoryStats(String clinicId) =>
+      _sendMap('GET', '/inventory/stats', query: {'clinic_id': clinicId});
 }
