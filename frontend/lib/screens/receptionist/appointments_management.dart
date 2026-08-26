@@ -134,64 +134,100 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
     final timeController = TextEditingController(text: appt['appt_time']);
     final token = appt['token_number'];
 
+    Future<void> pickDate() async {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: DateTime.tryParse(dateController.text) ?? DateTime.now(),
+        firstDate: DateTime.now().subtract(const Duration(days: 365)),
+        lastDate: DateTime.now().add(const Duration(days: 365)),
+      );
+      if (picked != null) dateController.text = picked.toIso8601String().substring(0, 10);
+    }
+
+    Future<void> pickTime() async {
+      final parts = timeController.text.split(':');
+      final initial = TimeOfDay(hour: int.tryParse(parts.isNotEmpty ? parts[0] : '10') ?? 10, minute: int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
+      final picked = await showTimePicker(context: context, initialTime: initial);
+      if (picked != null) timeController.text = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+    }
+
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: Text(token != null
-              ? 'Reschedule Appointment: T-$token'
-              : 'Reschedule Appointment'),
-          content: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: dateController,
-                  decoration: const InputDecoration(labelText: 'New Date (YYYY-MM-DD) *'),
-                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: timeController,
-                  decoration: const InputDecoration(labelText: 'New Time (HH:MM) *'),
-                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                ),
-              ],
+        return StatefulBuilder(builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text(token != null
+                ? 'Reschedule Appointment: T-$token'
+                : 'Reschedule Appointment'),
+            content: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: dateController,
+                    readOnly: true,
+                    onTap: () async { await pickDate(); setDialogState(() {}); },
+                    decoration: const InputDecoration(labelText: 'New Date *', suffixIcon: Icon(Icons.calendar_today, size: 18)),
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return 'Required';
+                      if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v)) return 'Use YYYY-MM-DD';
+                      if (DateTime.tryParse(v) == null) return 'Invalid date';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: timeController,
+                    readOnly: true,
+                    onTap: () async { await pickTime(); setDialogState(() {}); },
+                    decoration: const InputDecoration(labelText: 'New Time *', suffixIcon: Icon(Icons.access_time, size: 18)),
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return 'Required';
+                      if (!RegExp(r'^\d{2}:\d{2}$').hasMatch(v)) return 'Use HH:MM';
+                      final parts = v.split(':');
+                      final h = int.tryParse(parts[0]) ?? -1;
+                      final m = int.tryParse(parts[1]) ?? -1;
+                      if (h < 0 || h > 23 || m < 0 || m > 59) return 'Invalid time';
+                      return null;
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  try {
-                    await _apiService.rescheduleAppointment(
-                      appt['appt_id'],
-                      dateController.text.trim(),
-                      timeController.text.trim(),
-                    );
-                    if (!context.mounted) return;
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(this.context).showSnackBar(
-                      SnackBar(content: Text('Appointment rescheduled to ${dateController.text} at ${timeController.text}.')),
-                    );
-                    _fetchAppointments();
-                  } on ApiException catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(this.context).showSnackBar(
-                      SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-                    );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (formKey.currentState!.validate()) {
+                    try {
+                      await _apiService.rescheduleAppointment(
+                        appt['appt_id'],
+                        dateController.text.trim(),
+                        timeController.text.trim(),
+                      );
+                      if (!context.mounted) return;
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        SnackBar(content: Text('Appointment rescheduled to ${dateController.text} at ${timeController.text}.')),
+                      );
+                      _fetchAppointments();
+                    } on ApiException catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+                      );
+                    }
                   }
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        });
       },
     );
   }
@@ -906,8 +942,13 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
               const SizedBox(height: 10),
               TextFormField(
                 controller: _dobController,
-                decoration: const InputDecoration(labelText: 'DOB (YYYY-MM-DD) *'),
-                validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                decoration: const InputDecoration(labelText: 'DOB (YYYY-MM-DD) *', suffixIcon: Icon(Icons.calendar_today, size: 18)),
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'Required field';
+                  if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v)) return 'Use YYYY-MM-DD';
+                  if (DateTime.tryParse(v) == null) return 'Invalid date';
+                  return null;
+                },
               ),
               const SizedBox(height: 20),
               Row(

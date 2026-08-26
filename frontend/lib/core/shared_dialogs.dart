@@ -25,6 +25,24 @@ Future<void> showBookingDialog({
 
   if (!context.mounted) return;
 
+  Future<void> pickDate(StateSetter setDialogState) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.tryParse(dateCtrl.text) ?? now,
+      firstDate: now.subtract(const Duration(days: 365)),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (picked != null) setDialogState(() => dateCtrl.text = picked.toIso8601String().substring(0, 10));
+  }
+
+  Future<void> pickTime(StateSetter setDialogState) async {
+    final parts = timeCtrl.text.split(':');
+    final initial = TimeOfDay(hour: int.tryParse(parts.isNotEmpty ? parts[0] : '10') ?? 10, minute: int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
+    final picked = await showTimePicker(context: context, initialTime: initial);
+    if (picked != null) setDialogState(() => timeCtrl.text = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}');
+  }
+
   showDialog(
     context: context,
     builder: (ctx) => StatefulBuilder(builder: (ctx, setDialogState) {
@@ -52,14 +70,33 @@ Future<void> showBookingDialog({
                   Text('Patient: $selectedPatientId', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
                 TextFormField(
                   controller: dateCtrl,
-                  decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD)', labelStyle: TextStyle(fontSize: 12)),
+                  readOnly: true,
+                  onTap: () => pickDate(setDialogState),
+                  decoration: const InputDecoration(labelText: 'Date', suffixIcon: Icon(Icons.calendar_today, size: 18), labelStyle: TextStyle(fontSize: 12)),
                   style: const TextStyle(fontSize: 12),
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return 'Required';
+                    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v)) return 'Use YYYY-MM-DD';
+                    if (DateTime.tryParse(v) == null) return 'Invalid date';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: timeCtrl,
-                  decoration: const InputDecoration(labelText: 'Time (HH:MM)', labelStyle: TextStyle(fontSize: 12)),
+                  readOnly: true,
+                  onTap: () => pickTime(setDialogState),
+                  decoration: const InputDecoration(labelText: 'Time', suffixIcon: Icon(Icons.access_time, size: 18), labelStyle: TextStyle(fontSize: 12)),
                   style: const TextStyle(fontSize: 12),
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return 'Required';
+                    if (!RegExp(r'^\d{2}:\d{2}$').hasMatch(v)) return 'Use HH:MM';
+                    final parts = v.split(':');
+                    final h = int.tryParse(parts[0]) ?? -1;
+                    final m = int.tryParse(parts[1]) ?? -1;
+                    if (h < 0 || h > 23 || m < 0 || m > 59) return 'Invalid time';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -77,7 +114,7 @@ Future<void> showBookingDialog({
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () async {
-              if (selectedPatientId == null) { formKey.currentState?.validate(); return; }
+              if (selectedPatientId == null || !(formKey.currentState?.validate() ?? false)) return;
               try {
                 await api.createAppointment({
                   'patient_id': selectedPatientId,

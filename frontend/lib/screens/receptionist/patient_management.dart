@@ -125,8 +125,13 @@ class _PatientManagementState extends State<PatientManagement> {
                           Expanded(
                             child: TextFormField(
                               controller: mobileController,
+                              keyboardType: TextInputType.phone,
                               decoration: const InputDecoration(labelText: 'Mobile Number *'),
-                              validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                              validator: (v) {
+                                if (v == null || v.isEmpty) return 'Required field';
+                                if (!RegExp(r'^[6-9]\d{9}$').hasMatch(v)) return 'Enter 10-digit mobile';
+                                return null;
+                              },
                             ),
                           ),
                           const SizedBox(width: 16),
@@ -157,7 +162,13 @@ class _PatientManagementState extends State<PatientManagement> {
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: emailController,
+                        keyboardType: TextInputType.emailAddress,
                         decoration: const InputDecoration(labelText: 'Email (Optional)'),
+                        validator: (v) {
+                          if (v == null || v.isEmpty) return null;
+                          if (!RegExp(r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(v)) return 'Invalid email';
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
