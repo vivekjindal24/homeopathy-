@@ -371,6 +371,7 @@ class _QueueManagementState extends State<QueueManagement> {
     setState(() {
       _isLoading = true;
       _error = null;
+      _waiverEligible.clear();
     });
 
     try {
