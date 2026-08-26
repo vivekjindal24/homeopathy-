@@ -57,6 +57,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   List<dynamic> _invoices = [];
   Map<String, dynamic>? _activeConsultAppt;
   String _searchQ = '';
+  String _billingFilter = 'All';
   String? _error;
   DateTime? _lastFetched;
 
@@ -1086,7 +1087,6 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     final isOverdue = (dynamic inv) =>
         inv['status'] == InvoiceStatus.issued && _parseAmount(inv['due_amount']) > 0;
     final statusFilters = ['All', InvoiceStatus.paid, InvoiceStatus.partiallyPaid, _overdueFilter, InvoiceStatus.draft];
-    String activeStatus = 'All';
     final metrics = [
       {'label': 'Total Invoices', 'value': '${_invoices.length}', 'icon': Icons.receipt_long_outlined, 'ic': cPrimary, 'ibg': cEm50},
       {'label': 'Paid', 'value': '${_invoices.where((i) => i['status'] == InvoiceStatus.paid).length}', 'icon': Icons.check_circle_outline_rounded, 'ic': cEm600, 'ibg': cEm50},
@@ -1097,13 +1097,13 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
     return StatefulBuilder(builder: (ctx, setS) {
       final filtered = _invoices.where((inv) {
-        switch (activeStatus) {
+        switch (_billingFilter) {
           case 'All':
             return true;
           case _overdueFilter:
             return isOverdue(inv);
           default:
-            return inv['status'] == activeStatus;
+            return inv['status'] == _billingFilter;
         }
       }).toList();
       return Padding(
@@ -1135,9 +1135,9 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                     Expanded(child: Row(children: statusFilters.map((f) => Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: InkWell(
-                        onTap: () => setS(() => activeStatus = f),
+                        onTap: () => setS(() => _billingFilter = f),
                         borderRadius: BorderRadius.circular(6),
-                        child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: activeStatus == f ? cPrimary : cMutedBg, borderRadius: BorderRadius.circular(6)), child: Text(f, style: TextStyle(fontSize: 11, color: activeStatus == f ? Colors.white : cMuted))),
+                        child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _billingFilter == f ? cPrimary : cMutedBg, borderRadius: BorderRadius.circular(6)), child: Text(f, style: TextStyle(fontSize: 11, color: _billingFilter == f ? Colors.white : cMuted))),
                       ),
                     )).toList())),
                     _primaryBtn('New Invoice', Icons.add_rounded, () {}),
