@@ -794,6 +794,17 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
   String _generatedToken = "";
   bool _creating = false;
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _nameController.dispose();
+    _dobController.dispose();
+    _mobileController.dispose();
+    _addressController.dispose();
+    _occupationController.dispose();
+    super.dispose();
+  }
+
   Future<void> _searchPatients(String query) async {
     if (query.isEmpty) return;
     setState(() {

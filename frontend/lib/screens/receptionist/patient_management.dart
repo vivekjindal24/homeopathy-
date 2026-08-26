@@ -24,6 +24,12 @@ class _PatientManagementState extends State<PatientManagement> {
     _fetchPatients();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _fetchPatients() async {
     setState(() {
       _isLoading = true;
