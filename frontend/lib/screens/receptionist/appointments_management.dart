@@ -635,9 +635,23 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
   }
 
   Widget _buildCalendarView(Map<String, Color> styles) {
-    final days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    // Simply distribute existing appointments into columns based on date indices
-    // (mocking calendar layout details)
+    final now = DateTime.now();
+    final startOfWeek = now.subtract(Duration(days: now.weekday - 1)); // Monday
+    final dates = List.generate(6, (i) => startOfWeek.add(Duration(days: i)));
+    final dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    final todayStr = now.toIso8601String().split('T')[0];
+
+    final dayAppts = <int, List<dynamic>>{};
+    for (final a in _appointments) {
+      final apptDate = (a['appt_date'] ?? '').toString().split('T')[0];
+      for (int i = 0; i < dates.length; i++) {
+        if (dates[i].toIso8601String().split('T')[0] == apptDate) {
+          dayAppts.putIfAbsent(i, () => []).add(a);
+          break;
+        }
+      }
+    }
+
     return Card(
       child: Column(
         children: [
@@ -647,23 +661,25 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Schedule Flow: Weekly Overview', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                Text('Date Range: ${widget.dateStr}', style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                Text('Week of ${dates.first.toIso8601String().split('T')[0]}', style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
               ],
             ),
           ),
           const Divider(height: 1),
           Expanded(
             child: Row(
-              children: List.generate(days.length, (index) {
-                final dayName = days[index];
-                final isToday = index == 3; // mock today as Thursday
+              children: List.generate(dates.length, (index) {
+                final dayName = dayNames[index];
+                final dateStr = dates[index].toIso8601String().split('T')[0];
+                final isToday = dateStr == todayStr;
+                final apptsForDay = dayAppts[index] ?? [];
 
                 return Expanded(
                   child: Container(
                     decoration: BoxDecoration(
                       color: isToday ? const Color(0xFF0F766E).withOpacity(0.03) : Colors.transparent,
                       border: Border(
-                        right: index < days.length - 1
+                        right: index < dates.length - 1
                             ? const BorderSide(color: Color(0xFFE2E8F0))
                             : BorderSide.none,
                       ),
@@ -672,7 +688,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                     child: Column(
                       children: [
                         Text(
-                          dayName,
+                          '$dayName ${dates[index].day}',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
@@ -680,48 +696,54 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        if (isToday)
-                          Expanded(
-                            child: ListView.builder(
-                              itemCount: _appointments.length,
-                              itemBuilder: (context, idx) {
-                                final a = _appointments[idx];
-                                final status = '${a['status'] ?? ''}';
-                                final styleColor = styles[status] ?? const Color(0xFF64748B);
+                        Expanded(
+                          child: apptsForDay.isEmpty
+                              ? Center(
+                                  child: Text('—', style: TextStyle(fontSize: 11, color: Colors.grey[400])),
+                                )
+                              : ListView.builder(
+                                  itemCount: apptsForDay.length,
+                                  itemBuilder: (context, idx) {
+                                    final a = apptsForDay[idx];
+                                    final status = '${a['status'] ?? ''}';
+                                    final styleColor = styles[status] ?? const Color(0xFF64748B);
 
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: styleColor.withOpacity(0.08),
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(color: styleColor.withOpacity(0.2)),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '${a['appt_time'] ?? '--:--'}',
-                                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: styleColor),
+                                    return Container(
+                                      margin: const.only(bottom: 8),
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: styleColor.withOpacity(0.08),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: styleColor.withOpacity(0.2)),
                                       ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        a['patient']?['full_name'] ?? 'Walk-In',
-                                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-                                        overflow: TextOverflow.ellipsis,
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${a['appt_time'] ?? '--:--'}',
+                                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: styleColor),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            '${a['patient']?['full_name'] ?? 'Patient'}',
+                                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                            decoration: BoxDecoration(
+                                              color: styleColor.withOpacity(0.1),
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: Text(status, style: TextStyle(fontSize: 8, color: styleColor)),
+                                          ),
+                                        ],
                                       ),
-                                      Text(
-                                        '${a['visit_type'] ?? '--'}',
-                                        style: const TextStyle(fontSize: 8, color: Color(0xFF64748B)),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                          )
-                        else
-                          const Expanded(child: Center(child: Text('—', style: TextStyle(color: Color(0xFFCBD5E1))))),
+                                    );
+                                  },
+                                ),
+                        ),
                       ],
                     ),
                   ),
