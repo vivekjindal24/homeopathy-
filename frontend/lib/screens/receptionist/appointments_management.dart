@@ -547,6 +547,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                                   try {
                                     await _apiService.updateAppointmentStatus(
                                         a['appt_id'], AppointmentStatus.arrived);
+                                    if (!mounted) return;
                                     _fetchAppointments();
                                   } on ApiException catch (e) {
                                     if (!mounted) return;
@@ -568,6 +569,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                                   try {
                                     await _apiService.updateAppointmentStatus(
                                         a['appt_id'], AppointmentStatus.inConsultation);
+                                    if (!mounted) return;
                                     _fetchAppointments();
                                   } on ApiException catch (e) {
                                     if (!mounted) return;
@@ -585,6 +587,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                                   try {
                                     await _apiService.updateAppointmentStatus(
                                         a['appt_id'], AppointmentStatus.noShow);
+                                    if (!mounted) return;
                                     _fetchAppointments();
                                   } on ApiException catch (e) {
                                     if (!mounted) return;

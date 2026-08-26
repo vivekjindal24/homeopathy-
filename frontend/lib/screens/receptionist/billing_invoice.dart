@@ -356,6 +356,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                                           ElevatedButton(
                                             onPressed: () async {
                                               final paid = await showRecordPaymentDialog(context, _apiService, inv);
+                                              if (!mounted) return;
                                               if (paid) _fetchData();
                                             },
                                             child: const Text('Pay'),

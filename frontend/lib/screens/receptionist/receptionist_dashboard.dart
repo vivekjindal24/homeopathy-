@@ -1325,6 +1325,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                                   if (status == InvoiceStatus.issued || status == InvoiceStatus.partiallyPaid)
                                     _smallBtn('Pay', cEm100, cEm700, () async {
                                       final recorded = await showRecordPaymentDialog(context, _api, inv);
+                                      if (!mounted) return;
                                       if (recorded) _fetchData();
                                     }),
                                 ])),
