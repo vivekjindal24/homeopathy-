@@ -10,8 +10,6 @@ class AppointmentStatus {
   static const completed = 'Completed';
   static const noShow = 'No-Show';
   static const cancelled = 'Cancelled';
-
-  static const all = [scheduled, confirmed, arrived, inConsultation, completed, noShow, cancelled];
 }
 
 /// Queue board columns map to appointment statuses (PRD §5.4.1).
@@ -27,8 +25,6 @@ class InvoiceStatus {
   static const issued = 'Issued';
   static const partiallyPaid = 'Partially Paid';
   static const paid = 'Paid';
-
-  static const all = [draft, issued, partiallyPaid, paid];
 }
 
 class VisitType {
@@ -66,7 +62,6 @@ const cAccent   = Color(0xFFE9EBEF);
 const cPrimary  = Color(0xFF0F766E);
 
 const cAmber50  = Color(0xFFFFFBEB);
-const cAmber100 = Color(0xFFFEF3C7);
 const cAmber200 = Color(0xFFFDE68A);
 const cAmber700 = Color(0xFFB45309);
 const cBlue50   = Color(0xFFEFF6FF);
@@ -89,8 +84,6 @@ const cSlate600 = Color(0xFF475569);
 const cPurple50 = Color(0xFFFAF5FF);
 const cPurple100= Color(0xFFEDE9FE);
 const cPurple700= Color(0xFF7E22CE);
-const cOrange50 = Color(0xFFFFF7ED);
-const cOrange500= Color(0xFFF97316);
 
 /// Shared palette extracted from the duplicated per-file color blocks.
 class AppColors {
@@ -113,7 +106,6 @@ class AppColors {
   static const violet700 = Color(0xFF6D28D9);
   static const slate200 = Color(0xFFE2E8F0);
   static const slate400 = Color(0xFF94A3B8);
-  static const orange500 = Color(0xFFF97316);
 }
 
 Color statusColor(String status) {

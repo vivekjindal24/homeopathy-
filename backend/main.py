@@ -10,12 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from database import engine, Base, get_db
+from alembic.config import Config
+from alembic import command
 import models, schemas, crud, auth
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
     seed_data()
     yield
 
