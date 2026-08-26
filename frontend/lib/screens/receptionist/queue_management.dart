@@ -410,12 +410,15 @@ class _QueueManagementState extends State<QueueManagement> {
 
   Future<void> _transitionStatus(String apptId, String nextStatus) async {
     try {
-      await _apiService.updateAppointmentStatus(apptId, nextStatus);
+      final updated = await _apiService.updateAppointmentStatus(apptId, nextStatus);
       if (!mounted) return;
+      setState(() {
+        final idx = _appointments.indexWhere((a) => a['appt_id'] == apptId);
+        if (idx != -1) _appointments[idx] = updated;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Queue status updated to $nextStatus.')),
       );
-      _fetchQueue();
     } on ApiException catch (e) {
       if (!mounted) return;
       showDialog(
@@ -472,60 +475,115 @@ class _QueueManagementState extends State<QueueManagement> {
               ? const Center(child: CircularProgressIndicator())
               : Padding(
                   padding: const EdgeInsets.all(24.0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Waiting Column
-                      Expanded(
-                        child: _buildQueueColumn(
-                          title: "Waiting Queue",
-                          count: waiting.length,
-                          color: Colors.teal[700]!,
-                          items: waiting,
-                          buildItemCard: (appt) =>
-                              _buildPatientCard(appt, isWaiting: true),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < 700) {
+                        return Wrap(
+                          spacing: 16, runSpacing: 16,
+                          children: [
+                            SizedBox(
+                              width: constraints.maxWidth,
+                              child: _buildQueueColumn(
+                                title: "Waiting Queue",
+                                count: waiting.length,
+                                color: Colors.teal[700]!,
+                                items: waiting,
+                                buildItemCard: (appt) =>
+                                    _buildPatientCard(appt, isWaiting: true),
+                              ),
+                            ),
+                            SizedBox(
+                              width: constraints.maxWidth,
+                              child: _buildQueueColumn(
+                                title: AppointmentStatus.inConsultation,
+                                count: inConsultation.length,
+                                color: Colors.purple[700]!,
+                                items: inConsultation,
+                                buildItemCard: (appt) =>
+                                    _buildPatientCard(appt, isInConsultation: true),
+                              ),
+                            ),
+                            SizedBox(
+                              width: constraints.maxWidth,
+                              child: _buildQueueColumn(
+                                title: "Completed Visits",
+                                count: completed.length,
+                                color: Colors.green[700]!,
+                                items: completed,
+                                buildItemCard: (appt) =>
+                                    _buildPatientCard(appt, isCompleted: true),
+                              ),
+                            ),
+                            SizedBox(
+                              width: constraints.maxWidth,
+                              child: _buildQueueColumn(
+                                title: "No-Show / Cancelled",
+                                count: noShow.length,
+                                color: Colors.red[700]!,
+                                items: noShow,
+                                buildItemCard: (appt) =>
+                                    _buildPatientCard(appt, isNoShow: true),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Waiting Column
+                          Expanded(
+                            child: _buildQueueColumn(
+                              title: "Waiting Queue",
+                              count: waiting.length,
+                              color: Colors.teal[700]!,
+                              items: waiting,
+                              buildItemCard: (appt) =>
+                                  _buildPatientCard(appt, isWaiting: true),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
 
-                      // In Consultation Column
-                      Expanded(
-                        child: _buildQueueColumn(
-                          title: AppointmentStatus.inConsultation,
-                          count: inConsultation.length,
-                          color: Colors.purple[700]!,
-                          items: inConsultation,
-                          buildItemCard: (appt) =>
-                              _buildPatientCard(appt, isInConsultation: true),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
+                          // In Consultation Column
+                          Expanded(
+                            child: _buildQueueColumn(
+                              title: AppointmentStatus.inConsultation,
+                              count: inConsultation.length,
+                              color: Colors.purple[700]!,
+                              items: inConsultation,
+                              buildItemCard: (appt) =>
+                                  _buildPatientCard(appt, isInConsultation: true),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
 
-                      // Completed Column
-                      Expanded(
-                        child: _buildQueueColumn(
-                          title: "Completed Visits",
-                          count: completed.length,
-                          color: Colors.green[700]!,
-                          items: completed,
-                          buildItemCard: (appt) =>
-                              _buildPatientCard(appt, isCompleted: true),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
+                          // Completed Column
+                          Expanded(
+                            child: _buildQueueColumn(
+                              title: "Completed Visits",
+                              count: completed.length,
+                              color: Colors.green[700]!,
+                              items: completed,
+                              buildItemCard: (appt) =>
+                                  _buildPatientCard(appt, isCompleted: true),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
 
-                      // No-Show Column
-                      Expanded(
-                        child: _buildQueueColumn(
-                          title: "No-Show / Cancelled",
-                          count: noShow.length,
-                          color: Colors.red[700]!,
-                          items: noShow,
-                          buildItemCard: (appt) =>
-                              _buildPatientCard(appt, isNoShow: true),
-                        ),
-                      ),
-                    ],
+                          // No-Show Column
+                          Expanded(
+                            child: _buildQueueColumn(
+                              title: "No-Show / Cancelled",
+                              count: noShow.length,
+                              color: Colors.red[700]!,
+                              items: noShow,
+                              buildItemCard: (appt) =>
+                                  _buildPatientCard(appt, isNoShow: true),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
     );

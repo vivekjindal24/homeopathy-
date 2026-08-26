@@ -23,7 +23,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
   final _followUpController = TextEditingController();
 
   final List<Map<String, String>> _medicines = [
-    {"name": "", "potency": "", "dosage": "", "frequency": "", "duration": ""}
+    {"name": "", "potency": "", "dosage": "", "frequency": "", "duration": "", "_key": ""}
   ];
 
   bool _isWaiverEligible = false;
@@ -33,6 +33,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
   @override
   void initState() {
     super.initState();
+    _medicines[0]['_key'] = UniqueKey().toString();
     _checkWaiverEligibility();
   }
 
@@ -54,7 +55,8 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
         "potency": "",
         "dosage": "",
         "frequency": "",
-        "duration": ""
+        "duration": "",
+        "_key": UniqueKey().toString()
       });
     });
   }
@@ -239,54 +241,58 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
                               itemCount: _medicines.length,
                               separatorBuilder: (context, index) => const SizedBox(height: 16),
                               itemBuilder: (context, idx) {
-                                return Row(
-                                  children: [
-                                    Expanded(
-                                      flex: 3,
-                                      child: TextFormField(
-                                        decoration: const InputDecoration(labelText: 'Medicine Name *', contentPadding: EdgeInsets.all(12)),
-                                        onChanged: (v) => _medicines[idx]['name'] = v,
-                                        validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                                final med = _medicines[idx];
+                                return KeyedSubtree(
+                                  key: ValueKey(med['_key']),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        flex: 3,
+                                        child: TextFormField(
+                                          decoration: const InputDecoration(labelText: 'Medicine Name *', contentPadding: EdgeInsets.all(12)),
+                                          onChanged: (v) => _medicines[idx]['name'] = v,
+                                          validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      flex: 2,
-                                      child: TextFormField(
-                                        decoration: const InputDecoration(labelText: 'Potency / Dilution', contentPadding: EdgeInsets.all(12)),
-                                        onChanged: (v) => _medicines[idx]['potency'] = v,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        flex: 2,
+                                        child: TextFormField(
+                                          decoration: const InputDecoration(labelText: 'Potency / Dilution', contentPadding: EdgeInsets.all(12)),
+                                          onChanged: (v) => _medicines[idx]['potency'] = v,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      flex: 2,
-                                      child: TextFormField(
-                                        decoration: const InputDecoration(labelText: 'Dosage / Drops', contentPadding: EdgeInsets.all(12)),
-                                        onChanged: (v) => _medicines[idx]['dosage'] = v,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        flex: 2,
+                                        child: TextFormField(
+                                          decoration: const InputDecoration(labelText: 'Dosage / Drops', contentPadding: EdgeInsets.all(12)),
+                                          onChanged: (v) => _medicines[idx]['dosage'] = v,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      flex: 2,
-                                      child: TextFormField(
-                                        decoration: const InputDecoration(labelText: 'Frequency', contentPadding: EdgeInsets.all(12)),
-                                        onChanged: (v) => _medicines[idx]['frequency'] = v,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        flex: 2,
+                                        child: TextFormField(
+                                          decoration: const InputDecoration(labelText: 'Frequency', contentPadding: EdgeInsets.all(12)),
+                                          onChanged: (v) => _medicines[idx]['frequency'] = v,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      flex: 2,
-                                      child: TextFormField(
-                                        decoration: const InputDecoration(labelText: 'Duration', contentPadding: EdgeInsets.all(12)),
-                                        onChanged: (v) => _medicines[idx]['duration'] = v,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        flex: 2,
+                                        child: TextFormField(
+                                          decoration: const InputDecoration(labelText: 'Duration', contentPadding: EdgeInsets.all(12)),
+                                          onChanged: (v) => _medicines[idx]['duration'] = v,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                      onPressed: () => _removeMedicineRow(idx),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                        onPressed: () => _removeMedicineRow(idx),
+                                      ),
+                                    ],
+                                  ),
                                 );
                               },
                             ),

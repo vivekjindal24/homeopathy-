@@ -955,21 +955,29 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       padding: const EdgeInsets.all(24),
       child: Column(children: [
         // Summary stats
-        GridView.count(
-          crossAxisCount: 6, mainAxisSpacing: 12, crossAxisSpacing: 12,
-          childAspectRatio: 1.4, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-          children: summaryStats.map((s) => Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
-            child: Column(children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text(s['label'] as String, style: const TextStyle(fontSize: 9, color: cMuted)),
-                Icon(s['icon'] as IconData, size: 14, color: s['color'] as Color),
-              ]),
-              const SizedBox(height: 6),
-              Align(alignment: Alignment.centerLeft, child: Text(s['value'] as String, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: s['color'] as Color))),
-            ]),
-          )).toList(),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final crossAxisCount = constraints.maxWidth > 1200 ? 6
+                : constraints.maxWidth > 900 ? 4
+                : constraints.maxWidth > 600 ? 3
+                : 2;
+            return GridView.count(
+              crossAxisCount: crossAxisCount, mainAxisSpacing: 12, crossAxisSpacing: 12,
+              childAspectRatio: 1.4, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+              children: summaryStats.map((s) => Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
+                child: Column(children: [
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    Text(s['label'] as String, style: const TextStyle(fontSize: 9, color: cMuted)),
+                    Icon(s['icon'] as IconData, size: 14, color: s['color'] as Color),
+                  ]),
+                  const SizedBox(height: 6),
+                  Align(alignment: Alignment.centerLeft, child: Text(s['value'] as String, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: s['color'] as Color))),
+                ]),
+              )).toList(),
+            );
+          },
         ),
         const SizedBox(height: 20),
 

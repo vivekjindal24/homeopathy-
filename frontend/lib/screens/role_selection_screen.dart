@@ -80,7 +80,9 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
           }
         }
 
-        return Dialog(
+        return PopScope(
+          canPop: !dialogLoading,
+          child: Dialog(
           backgroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Container(
@@ -187,6 +189,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
               ],
             ),
           ),
+        ),
         );
       }),
     );

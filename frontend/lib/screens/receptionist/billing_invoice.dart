@@ -176,7 +176,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                           if (formKey.currentState!.validate() && selectedPatientId != null) {
                             setDialogState(() => submitting = true);
                             try {
-                              await _apiService.createInvoice({
+                              final created = await _apiService.createInvoice({
                                 'patient_id': selectedPatientId,
                                 'consultation_fee': double.tryParse(consultationController.text) ?? 0.0,
                                 'medicine_charges': double.tryParse(medicineController.text) ?? 0.0,
@@ -188,7 +188,9 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                               ScaffoldMessenger.of(this.context).showSnackBar(
                                 const SnackBar(content: Text('Draft invoice created successfully.')),
                               );
-                              _fetchData();
+                              setState(() {
+                                _invoices = [created, ..._invoices];
+                              });
                             } on ApiException catch (e) {
                               if (!context.mounted) return;
                               setDialogState(() => submitting = false);
@@ -212,12 +214,15 @@ class _BillingInvoiceState extends State<BillingInvoice> {
 
   Future<void> _issueInvoice(String invoiceId) async {
     try {
-      await _apiService.issueInvoice(invoiceId);
+      final updated = await _apiService.issueInvoice(invoiceId);
       if (!mounted) return;
+      setState(() {
+        final idx = _invoices.indexWhere((inv) => inv['invoice_id'] == invoiceId);
+        if (idx != -1) _invoices[idx] = {..._invoices[idx], ...updated};
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Invoice issued successfully.')),
       );
-      _fetchData();
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -355,8 +360,12 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                                           ElevatedButton(
                                             onPressed: () async {
                                               final paid = await showRecordPaymentDialog(context, _apiService, inv);
-                                              if (!mounted) return;
-                                              if (paid) _fetchData();
+                                              if (!mounted || !paid) return;
+                                              final updatedInv = await _apiService.getInvoice(inv['invoice_id']);
+                                              setState(() {
+                                                final idx = _invoices.indexWhere((x) => x['invoice_id'] == inv['invoice_id']);
+                                                if (idx != -1) _invoices[idx] = updatedInv;
+                                              });
                                             },
                                             child: const Text('Pay'),
                                           ),

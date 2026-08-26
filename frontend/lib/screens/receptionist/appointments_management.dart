@@ -57,12 +57,15 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
 
   Future<void> _confirmAppointment(String apptId) async {
     try {
-      await _apiService.updateAppointmentStatus(apptId, AppointmentStatus.confirmed);
+      final updated = await _apiService.updateAppointmentStatus(apptId, AppointmentStatus.confirmed);
       if (!mounted) return;
+      setState(() {
+        final idx = _appointments.indexWhere((a) => a['appt_id'] == apptId);
+        if (idx != -1) _appointments[idx] = updated;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Patient appointment confirmed successfully.')),
       );
-      _fetchAppointments();
     } on ApiException catch (e) {
       if (!mounted) return;
       _showErrorDialog(e.message);
@@ -115,13 +118,16 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
     if (confirmed != true) return;
 
     try {
-      await _apiService.updateAppointmentStatus(apptId, AppointmentStatus.cancelled,
+      final updated = await _apiService.updateAppointmentStatus(apptId, AppointmentStatus.cancelled,
           reason: reasonController.text.trim());
       if (!mounted) return;
+      setState(() {
+        final idx = _appointments.indexWhere((a) => a['appt_id'] == apptId);
+        if (idx != -1) _appointments[idx] = updated;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Appointment has been cancelled.')),
       );
-      _fetchAppointments();
     } on ApiException catch (e) {
       if (!mounted) return;
       _showErrorDialog(e.message);
@@ -204,17 +210,20 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                 onPressed: () async {
                   if (formKey.currentState!.validate()) {
                     try {
-                      await _apiService.rescheduleAppointment(
+                      final updated = await _apiService.rescheduleAppointment(
                         appt['appt_id'],
                         dateController.text.trim(),
                         timeController.text.trim(),
                       );
                       if (!context.mounted) return;
+                      setState(() {
+                        final idx = _appointments.indexWhere((a) => a['appt_id'] == appt['appt_id']);
+                        if (idx != -1) _appointments[idx] = updated;
+                      });
                       Navigator.pop(context);
                       ScaffoldMessenger.of(this.context).showSnackBar(
                         SnackBar(content: Text('Appointment rescheduled to ${dateController.text} at ${timeController.text}.')),
                       );
-                      _fetchAppointments();
                     } on ApiException catch (e) {
                       if (!context.mounted) return;
                       ScaffoldMessenger.of(this.context).showSnackBar(
@@ -449,10 +458,12 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                               ElevatedButton(
                                 onPressed: () async {
                                   try {
-                                    await _apiService.updateAppointmentStatus(
+                                    final updated = await _apiService.updateAppointmentStatus(
                                         a['appt_id'], AppointmentStatus.arrived);
-                                    if (!mounted) return;
-                                    _fetchAppointments();
+                                    setState(() {
+                                      final idx = _appointments.indexWhere((x) => x['appt_id'] == a['appt_id']);
+                                      if (idx != -1) _appointments[idx] = updated;
+                                    });
                                   } on ApiException catch (e) {
                                     if (!mounted) return;
                                     _showErrorDialog(e.message);
@@ -471,10 +482,12 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                               OutlinedButton(
                                 onPressed: () async {
                                   try {
-                                    await _apiService.updateAppointmentStatus(
+                                    final updated = await _apiService.updateAppointmentStatus(
                                         a['appt_id'], AppointmentStatus.inConsultation);
-                                    if (!mounted) return;
-                                    _fetchAppointments();
+                                    setState(() {
+                                      final idx = _appointments.indexWhere((x) => x['appt_id'] == a['appt_id']);
+                                      if (idx != -1) _appointments[idx] = updated;
+                                    });
                                   } on ApiException catch (e) {
                                     if (!mounted) return;
                                     _showErrorDialog(e.message);
@@ -489,10 +502,12 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                               OutlinedButton(
                                 onPressed: () async {
                                   try {
-                                    await _apiService.updateAppointmentStatus(
+                                    final updated = await _apiService.updateAppointmentStatus(
                                         a['appt_id'], AppointmentStatus.noShow);
-                                    if (!mounted) return;
-                                    _fetchAppointments();
+                                    setState(() {
+                                      final idx = _appointments.indexWhere((x) => x['appt_id'] == a['appt_id']);
+                                      if (idx != -1) _appointments[idx] = updated;
+                                    });
                                   } on ApiException catch (e) {
                                     if (!mounted) return;
                                     _showErrorDialog(e.message);
