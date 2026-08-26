@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../core/shared_widgets.dart';
 import '../../services/api_service.dart';
-
-double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
 
 DateTime? _parseDate(dynamic v) {
   if (v == null || '${v}'.isEmpty) return null;
@@ -100,7 +99,7 @@ class _PaymentsManagementState extends State<PaymentsManagement> {
     double onlineRev = 0.0;
 
     for (var p in _paymentsList) {
-      final amt = _parseAmount(p['amount']);
+      final amt = parseAmount(p['amount']);
       totalRevenue += amt;
       switch (p['payment_mode']) {
         case PaymentMode.cash:
@@ -220,7 +219,7 @@ class _PaymentsManagementState extends State<PaymentsManagement> {
                                       final pId = pIdStr.length > 8
                                           ? pIdStr.substring(0, 8).toUpperCase()
                                           : pIdStr.toUpperCase();
-                                      final double amt = _parseAmount(p['amount']);
+                                      final double amt = parseAmount(p['amount']);
 
                                       // Formatting timestamp safely
                                       final dt = _parseDate(p['paid_at']);

@@ -1,50 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../core/shared_widgets.dart';
 import '../../services/api_service.dart';
+import '../../core/shared_dialogs.dart';
+import '../components/charts.dart';
 import 'queue_management.dart' show showProcessBillingDialog, showRecordPaymentDialog;
-
-// ─── Color System ────────────────────────────────────
-const cBg       = Color(0xFFF8FAFC);   // slate-50
-const cCard     = Color(0xFFFFFFFF);   // white
-const cBorder   = Color(0x1A000000);   // rgba(0,0,0,0.1)
-const cFg       = Color(0xFF0F172A);   // near-black
-const cMuted    = Color(0xFF717182);   // muted-foreground
-const cMutedBg  = Color(0xFFECECF0);   // muted bg
-const cAccent   = Color(0xFFE9EBEF);   // accent
-const cPrimary  = Color(0xFF0F766E);   // teal primary
-
-// Semantic colors
-const cAmber50  = Color(0xFFFFFBEB);
-const cAmber100 = Color(0xFFFEF3C7);
-const cAmber200 = Color(0xFFFDE68A);
-const cAmber700 = Color(0xFFB45309);
-const cBlue50   = Color(0xFFEFF6FF);
-const cBlue100  = Color(0xFFDBEAFE);
-const cBlue200  = Color(0xFFBFDBFE);
-const cBlue700  = Color(0xFF1D4ED8);
-const cEm50     = Color(0xFFECFDF5);
-const cEm100    = Color(0xFFD1FAE5);
-const cEm200    = Color(0xFFA7F3D0);
-const cEm600    = Color(0xFF059669);
-const cEm700    = Color(0xFF047857);
-const cRed50    = Color(0xFFFEF2F2);
-const cRed100   = Color(0xFFFEE2E2);
-const cRed600   = Color(0xFFDC2626);
-const cSlate50  = Color(0xFFF8FAFC);
-const cSlate100 = Color(0xFFF1F5F9);
-const cSlate200 = Color(0xFFE2E8F0);
-const cSlate400 = Color(0xFF94A3B8);
-const cSlate600 = Color(0xFF475569);
-const cPurple50 = Color(0xFFFAF5FF);
-const cPurple100= Color(0xFFEDE9FE);
-const cPurple700= Color(0xFF7E22CE);
-
-double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
-
-String _shortId(dynamic id) {
-  final s = '${id ?? ''}';
-  return s.length > 8 ? s.substring(0, 8).toUpperCase() : s.toUpperCase();
-}
 
 class ReceptionistDashboard extends StatefulWidget {
   const ReceptionistDashboard({super.key});
@@ -424,23 +384,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           Text(meta['subtitle']!, style: const TextStyle(fontSize: 11, color: cMuted)),
         ])),
         // Search
-        SizedBox(
-          width: 240,
-          height: 34,
-          child: TextField(
-            onChanged: (v) => setState(() => _searchQ = v),
-            style: const TextStyle(fontSize: 12, color: cFg),
-            decoration: InputDecoration(
-              hintText: 'Search patients, invoices…',
-              hintStyle: const TextStyle(fontSize: 12, color: cMuted),
-              prefixIcon: const Icon(Icons.search_rounded, size: 16, color: cMuted),
-              filled: true, fillColor: cMutedBg,
-              contentPadding: EdgeInsets.zero,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: cBorder)),
-            ),
-          ),
+        searchField(
+          hint: 'Search patients, invoices…',
+          onChanged: (v) => setState(() => _searchQ = v),
         ),
         const SizedBox(width: 12),
         Text(dateStr, style: const TextStyle(fontSize: 11, color: cMuted)),
@@ -515,8 +461,8 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     final kpis = [
       {'label': "Today's Patients", 'value': '${_kpis['today_patients'] ?? 0}', 'delta': 'Registered today', 'up': true, 'icon': Icons.people_outline_rounded, 'iconColor': const Color(0xFF2563EB), 'iconBg': cBlue50},
       {'label': 'Active Queue', 'value': '$waiting', 'delta': '$waiting waiting · $inConsult in consult', 'up': null, 'icon': Icons.format_list_numbered_rounded, 'iconColor': cAmber700, 'iconBg': cAmber50},
-      {'label': "Today's Revenue", 'value': '₹${_parseAmount(_kpis['today_revenue']).toStringAsFixed(0)}', 'delta': 'Collected today', 'up': true, 'icon': Icons.currency_rupee_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
-      {'label': 'Pending Payments', 'value': '₹${_parseAmount(_kpis['pending_dues']).toStringAsFixed(0)}', 'delta': '${_invoices.where((i) => i['status'] == InvoiceStatus.partiallyPaid || i['status'] == InvoiceStatus.draft || i['status'] == InvoiceStatus.issued).length} invoices open', 'up': false, 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
+      {'label': "Today's Revenue", 'value': '₹${parseAmount(_kpis['today_revenue']).toStringAsFixed(0)}', 'delta': 'Collected today', 'up': true, 'icon': Icons.currency_rupee_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
+      {'label': 'Pending Payments', 'value': '₹${parseAmount(_kpis['pending_dues']).toStringAsFixed(0)}', 'delta': '${_invoices.where((i) => i['status'] == InvoiceStatus.partiallyPaid || i['status'] == InvoiceStatus.draft || i['status'] == InvoiceStatus.issued).length} invoices open', 'up': false, 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
     ];
 
     final recentPts = _patients.take(3).toList();
@@ -753,7 +699,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         if (payments.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Text('No payments today', style: TextStyle(fontSize: 11, color: cMuted))),
         ...payments.map((inv) {
           final name = inv['patient']?['full_name'] ?? inv['patient_id'] ?? '—';
-          final amount = _parseAmount(inv['total_amount']);
+          final amount = parseAmount(inv['total_amount']);
           final pays = inv['payments'] as List?;
           final mode = (pays != null && pays.isNotEmpty) ? '${pays.last['payment_mode'] ?? '—'}' : 'Unpaid';
           final modeColors = {PaymentMode.upi: cPurple50, PaymentMode.cash: cEm50, PaymentMode.card: cBlue50, PaymentMode.online: cEm50};
@@ -764,7 +710,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
             child: Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(name, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cFg)),
-                Text('INV · ${_shortId(inv['invoice_id'])}', style: const TextStyle(fontSize: 10, color: cMuted)),
+                Text('INV · ${shortId(inv['invoice_id'])}', style: const TextStyle(fontSize: 10, color: cMuted)),
               ])),
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Text('₹${amount.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cEm700)),
@@ -852,9 +798,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('Patients', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
-            Text('${_filteredPatients().length} total', style: const TextStyle(fontSize: 12, color: cMuted)),
+            Text('${filterPatientsLocal(_patients, _searchQ).length} total', style: const TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          _primaryBtn('New Patient', Icons.add_rounded, () => _showAddPatientDialog()),
+          primaryBtn('New Patient', Icons.add_rounded, () => _showAddPatientDialog()),
         ]),
         const SizedBox(height: 16),
 
@@ -877,13 +823,13 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
               ),
               const Divider(height: 1, color: cBorder),
               Expanded(
-                child: _filteredPatients().isEmpty
+                child: filterPatientsLocal(_patients, _searchQ).isEmpty
                     ? Center(child: Text(_searchQ.isEmpty ? 'No patients found' : 'No matches for “$_searchQ”', style: const TextStyle(fontSize: 12, color: cMuted)))
                     : ListView.separated(
-                        itemCount: _filteredPatients().length,
+                        itemCount: filterPatientsLocal(_patients, _searchQ).length,
                         separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
                         itemBuilder: (_, i) {
-                          final p = _filteredPatients()[i];
+                          final p = filterPatientsLocal(_patients, _searchQ)[i];
                           final name = p['full_name'] ?? '—';
                           final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
                           return Padding(
@@ -912,16 +858,6 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     );
   }
 
-  List<dynamic> _filteredPatients() {
-    if (_searchQ.isEmpty) return _patients;
-    final q = _searchQ.toLowerCase();
-    return _patients.where((p) {
-      final name = (p['full_name'] ?? '').toString().toLowerCase();
-      final mobile = (p['mobile_number'] ?? p['mobile'] ?? '').toString().toLowerCase();
-      return name.contains(q) || mobile.contains(q);
-    }).toList();
-  }
-
   // ─── TAB 3: APPOINTMENTS ─────────────────────────────
   Widget _buildAppointmentsTab() {
     return Padding(
@@ -932,7 +868,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
             Text('Appointments', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
             Text('Schedule, walk-ins & calendar', style: TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          _primaryBtn('Book Appointment', Icons.add_rounded, () => _showBookApptDialog()),
+          primaryBtn('Book Appointment', Icons.add_rounded, () => _showBookApptDialog()),
         ]),
         const SizedBox(height: 16),
         Expanded(
@@ -973,15 +909,15 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                               Expanded(flex: 2, child: _statusPill(status)),
                               Expanded(flex: 3, child: Row(children: [
                                 if (status == AppointmentStatus.scheduled)
-                                  _smallBtn('Confirm', cEm50, cEm700, () => _updateStatus(a['appt_id'], AppointmentStatus.confirmed)),
-                                if (status == AppointmentStatus.confirmed) _smallBtn('Arrive', cBlue50, cBlue700, () => _updateStatus(a['appt_id'], AppointmentStatus.arrived)),
+                                  smallBtn('Confirm', cEm50, cEm700, () => _updateStatus(a['appt_id'], AppointmentStatus.confirmed)),
+                                if (status == AppointmentStatus.confirmed) smallBtn('Arrive', cBlue50, cBlue700, () => _updateStatus(a['appt_id'], AppointmentStatus.arrived)),
                                 if (status == AppointmentStatus.arrived)
-                                  _smallBtn('Start', cPurple100, cPurple700, () => _updateStatus(a['appt_id'], AppointmentStatus.inConsultation)),
+                                  smallBtn('Start', cPurple100, cPurple700, () => _updateStatus(a['appt_id'], AppointmentStatus.inConsultation)),
                                 if (status != AppointmentStatus.cancelled &&
                                     status != AppointmentStatus.completed &&
                                     status != AppointmentStatus.inConsultation) ...[
                                   const SizedBox(width: 4),
-                                  _smallBtn('Cancel', cRed100, cRed600, () => _cancelWithReason(a)),
+                                  smallBtn('Cancel', cRed100, cRed600, () => _cancelWithReason(a)),
                                 ],
                               ])),
                             ]),
@@ -1234,7 +1170,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   Widget _buildBillingTab() {
     final statusFilters = ['All', InvoiceStatus.draft, InvoiceStatus.issued, InvoiceStatus.partiallyPaid, _overdueFilter, InvoiceStatus.paid];
     final isOverdue = (dynamic inv) =>
-        inv['status'] == InvoiceStatus.issued && _parseAmount(inv['due_amount']) > 0;
+        inv['status'] == InvoiceStatus.issued && parseAmount(inv['due_amount']) > 0;
 
     final metrics = [
       {'label': 'Total Invoices', 'value': '${_invoices.length}', 'icon': Icons.receipt_long_outlined, 'iconColor': cPrimary, 'iconBg': cEm50},
@@ -1297,7 +1233,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                         ),
                       ),
                     )).toList())),
-                    _primaryBtn('New Invoice', Icons.add_rounded, () {
+                    primaryBtn('New Invoice', Icons.add_rounded, () {
                       showProcessBillingDialog(context, api: _api, onDone: _fetchData);
                     }),
                   ]),
@@ -1326,20 +1262,20 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                           itemBuilder: (_, i) {
                             final inv = filtered[i];
                             final patient = inv['patient']?['full_name'] ?? inv['patient_id'] ?? '—';
-                            final due = _parseAmount(inv['due_amount']);
-                            final paidAmt = _parseAmount(inv['paid_amount']);
+                            final due = parseAmount(inv['due_amount']);
+                            final paidAmt = parseAmount(inv['paid_amount']);
                             final status = '${inv['status'] ?? InvoiceStatus.draft}';
                             return Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                               child: Row(children: [
-                                Expanded(flex: 2, child: Text(_shortId(inv['invoice_id']).isEmpty ? '—' : _shortId(inv['invoice_id']), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
+                                Expanded(flex: 2, child: Text(shortId(inv['invoice_id']).isEmpty ? '—' : shortId(inv['invoice_id']), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
                                 Expanded(flex: 3, child: Text(patient, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                                 Expanded(flex: 2, child: Text('₹${due.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
                                 Expanded(flex: 2, child: Text('₹${paidAmt.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, color: cEm700))),
                                 Expanded(flex: 2, child: _statusPill(status)),
                                 Expanded(flex: 2, child: Row(children: [
                                   if (status == InvoiceStatus.draft)
-                                    _smallBtn('Issue', cSlate100, cSlate600, () async {
+                                    smallBtn('Issue', cSlate100, cSlate600, () async {
                                       try {
                                         await _api.issueInvoice(inv['invoice_id']);
                                         if (!mounted) return;
@@ -1351,7 +1287,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                                     }),
                                   // Payments only on Issued / Partially Paid invoices
                                   if (status == InvoiceStatus.issued || status == InvoiceStatus.partiallyPaid)
-                                    _smallBtn('Pay', cEm100, cEm700, () async {
+                                    smallBtn('Pay', cEm100, cEm700, () async {
                                       final recorded = await showRecordPaymentDialog(context, _api, inv);
                                       if (!mounted) return;
                                       if (recorded) _fetchData();
@@ -1380,7 +1316,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       final pays = inv['payments'] as List? ?? [];
       final patientName = inv['patient']?['full_name'] ?? inv['patient_id'] ?? 'Walk-In';
       for (final p in pays) {
-        final amt = _parseAmount(p['amount']);
+        final amt = parseAmount(p['amount']);
         switch (p['payment_mode']) {
           case PaymentMode.cash:   cashRev += amt; break;
           case PaymentMode.upi:    upiRev += amt; break;
@@ -1411,7 +1347,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       {'label': 'UPI Collections', 'value': '₹${upiRev.toStringAsFixed(0)}', 'icon': Icons.phone_android_rounded, 'iconColor': cPurple700, 'iconBg': cPurple50},
       {'label': 'Card Collections', 'value': '₹${cardRev.toStringAsFixed(0)}', 'icon': Icons.credit_card_rounded, 'iconColor': cBlue700, 'iconBg': cBlue50},
       {'label': 'Online Collections', 'value': '₹${onlineRev.toStringAsFixed(0)}', 'icon': Icons.language_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
-      {'label': 'Pending Dues', 'value': '₹${_parseAmount(_kpis['pending_dues']).toStringAsFixed(0)}', 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
+      {'label': 'Pending Dues', 'value': '₹${parseAmount(_kpis['pending_dues']).toStringAsFixed(0)}', 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
     ];
 
     return Padding(
@@ -1477,7 +1413,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                             child: Row(children: [
-                              Expanded(flex: 2, child: Text('RCP-${_shortId(r['id'])}', style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary))),
+                              Expanded(flex: 2, child: Text('RCP-${shortId(r['id'])}', style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary))),
                               Expanded(flex: 3, child: Text('${r['name']}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                               Expanded(flex: 2, child: Text('₹${(r['amount'] as double).toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cEm700))),
                               Expanded(flex: 2, child: _tagBadge('${r['mode']}', cBlue50, cBlue700)),
@@ -1523,21 +1459,22 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         final paidAt = '${p['paid_at'] ?? ''}';
         if (paidAt.length >= 10) {
           final day = paidAt.substring(0, 10);
-          final amt = _parseAmount(p['amount']);
+          final amt = parseAmount(p['amount']);
           dailyRevenue[day] = (dailyRevenue[day] ?? 0) + amt;
         }
       }
     }
     final sortedDays = dailyRevenue.keys.toList()..sort();
     final last7 = sortedDays.length > 7 ? sortedDays.sublist(sortedDays.length - 7) : sortedDays;
-    final data = last7.map((d) => dailyRevenue[d]!).toList();
-    final days = last7.map((d) {
-      try {
-        final dt = DateTime.parse(d);
-        return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.weekday % 7];
-      } catch (_) { return d.substring(5); }
+    final series = last7.map((d) => {
+      'label': (() {
+        try {
+          final dt = DateTime.parse(d);
+          return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.weekday % 7];
+        } catch (_) { return d.substring(5); }
+      })(),
+      'value': dailyRevenue[d]!,
     }).toList();
-    final maxVal = data.isNotEmpty ? data.reduce((a, b) => a > b ? a : b) : 1.0;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
@@ -1556,18 +1493,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         const SizedBox(height: 20),
         SizedBox(
           height: 160,
-          child: data.isEmpty
+          child: series.isEmpty
               ? const Center(child: Text('No revenue data yet', style: TextStyle(fontSize: 12, color: cMuted)))
-              : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            for (int i = 0; i < data.length; i++) ...[
-              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                Container(height: (data[i] / maxVal) * 140, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))),
-                const SizedBox(height: 6),
-                Text(days[i], style: const TextStyle(fontSize: 9, color: cMuted)),
-              ])),
-              if (i < data.length - 1) const SizedBox(width: 4),
-            ],
-          ]),
+              : BarChartWidget(data: series, xKey: 'label', yKey: 'value'),
         ),
       ]),
     );
@@ -1577,7 +1505,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     double upi = 0, cash = 0, card = 0, online = 0;
     for (final inv in _invoices) {
       for (final p in (inv['payments'] as List? ?? [])) {
-        final amt = _parseAmount(p['amount']);
+        final amt = parseAmount(p['amount']);
         switch (p['payment_mode']) {
           case PaymentMode.upi:    upi += amt; break;
           case PaymentMode.cash:   cash += amt; break;
@@ -1645,9 +1573,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Profile Information', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
               const Divider(height: 20, color: cBorder),
-              _settingsRow('Full Name', _api.fullName ?? 'Receptionist'),
-              _settingsRow('Role', 'Receptionist'),
-              _settingsRow('Email', _api.baseUrl.contains('localhost') ? 'receptionist@vermahomeopathy.com' : '—'),
+              settingsRow('Full Name', _api.fullName ?? 'Receptionist'),
+              settingsRow('Role', 'Receptionist'),
+              settingsRow('Email', _api.baseUrl.contains('localhost') ? 'receptionist@vermahomeopathy.com' : '—'),
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: _signOut,
@@ -1663,23 +1591,15 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('System Preferences', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
               const Divider(height: 20, color: cBorder),
-              _settingsRow('API Endpoint', _api.baseUrl),
-              _settingsRow('Theme', 'Light (Default)'),
-              _settingsRow('Language', 'English (India)'),
+              settingsRow('API Endpoint', _api.baseUrl),
+              settingsRow('Theme', 'Light (Default)'),
+              settingsRow('Language', 'English (India)'),
             ]),
           )),
         ]),
       ]),
     );
   }
-
-  Widget _settingsRow(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(label, style: const TextStyle(fontSize: 12, color: cMuted)),
-      Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg)),
-    ]),
-  );
 
   // ─── DIALOGS ─────────────────────────────────────────
   void _showAddPatientDialog() {
@@ -1725,9 +1645,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
             _textField('Address *', addressCtrl, validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null),
             const SizedBox(height: 20),
             Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              _outlineBtn('Cancel', null, submitting ? () {} : () => Navigator.pop(ctx)),
+              outlineBtn('Cancel', null, submitting ? () {} : () => Navigator.pop(ctx)),
               const SizedBox(width: 8),
-              _primaryBtn(submitting ? 'Saving…' : 'Save Patient', null, submitting ? () {} : () async {
+              primaryBtn(submitting ? 'Saving…' : 'Save Patient', null, submitting ? () {} : () async {
                 if (!formKey.currentState!.validate()) return;
                 setD(() => submitting = true);
                 try {
@@ -1765,112 +1685,13 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       );
       return;
     }
-    final formKey = GlobalKey<FormState>();
-    String? selectedPatientId;
-    final dateCtrl = TextEditingController(text: _date);
-    final timeCtrl = TextEditingController(text: '10:00');
-    String visitType = VisitType.newVisit;
-    List<dynamic> patients = List.of(_patients);
-    bool loading = patients.isEmpty;
-    String? loadError;
-    bool submitting = false;
-
-    showDialog(context: context, builder: (ctx) => Dialog(
-      backgroundColor: cCard,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: StatefulBuilder(builder: (ctx, setD) {
-        Future<void> load() async {
-          setD(() => loading = true);
-          try {
-            final res = await _api.getPatients();
-            setD(() { patients = res; loading = false; });
-          } on ApiException catch (e) {
-            setD(() { loadError = e.message; loading = false; });
-          }
-        }
-
-        if (patients.isEmpty && loading && loadError == null) load();
-
-        return Container(
-          width: 420, padding: const EdgeInsets.all(24),
-          child: Form(
-            key: formKey,
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Book Appointment', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
-                IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
-              ]),
-              const Divider(height: 20, color: cBorder),
-              if (loading)
-                const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()))
-              else if (loadError != null)
-                Column(children: [
-                  Text('Failed to load patients: $loadError', style: const TextStyle(fontSize: 11, color: cRed600)),
-                  const SizedBox(height: 8),
-                  _outlineBtn('Retry', Icons.refresh_rounded, load),
-                ])
-              else ...[
-                DropdownButtonFormField<String>(
-                  value: selectedPatientId,
-                  decoration: const InputDecoration(labelText: 'Select Patient *', isDense: true),
-                  items: patients.map<DropdownMenuItem<String>>((p) => DropdownMenuItem<String>(
-                    value: p['patient_id'],
-                    child: Text('${p['full_name']} (${p['mobile_number'] ?? p['mobile'] ?? ''})'),
-                  )).toList(),
-                  onChanged: (v) => setD(() => selectedPatientId = v),
-                  validator: (v) => v == null ? 'Required' : null,
-                ),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _textField('Date (YYYY-MM-DD)', dateCtrl, validator: (v) => RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v ?? '') ? null : 'Use YYYY-MM-DD')),
-                  const SizedBox(width: 10),
-                  Expanded(child: _textField('Time (HH:MM)', timeCtrl, validator: (v) => RegExp(r'^\d{2}:\d{2}$').hasMatch(v ?? '') ? null : 'HH:MM')),
-                ]),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  value: visitType,
-                  decoration: const InputDecoration(labelText: 'Visit Type', isDense: true),
-                  items: const [
-                    DropdownMenuItem(value: VisitType.newVisit, child: Text('New')),
-                    DropdownMenuItem(value: VisitType.followUp, child: Text('Follow-Up')),
-                    DropdownMenuItem(value: VisitType.walkIn, child: Text('Walk-In')),
-                  ],
-                  onChanged: (v) => visitType = v ?? VisitType.newVisit,
-                ),
-              ],
-              const SizedBox(height: 20),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                _outlineBtn('Cancel', null, submitting ? () {} : () => Navigator.pop(ctx)),
-                const SizedBox(width: 8),
-                _primaryBtn(submitting ? 'Booking…' : 'Book Appointment', null, submitting ? () {} : () async {
-                  if (!formKey.currentState!.validate()) return;
-                  setD(() => submitting = true);
-                  try {
-                    await _api.createAppointment({
-                      'patient_id': selectedPatientId,
-                      'doctor_id': _api.userId!,
-                      'clinic_id': _clinicId,
-                      'appt_date': dateCtrl.text.trim(),
-                      'appt_time': timeCtrl.text.trim(),
-                      'visit_type': visitType,
-                    });
-                    if (!ctx.mounted) return;
-                    Navigator.pop(ctx);
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Appointment booked.')));
-                    _fetchData();
-                  } on ApiException catch (e) {
-                    if (!ctx.mounted) return;
-                    setD(() => submitting = false);
-                    ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text(e.message), backgroundColor: cRed600));
-                  }
-                }),
-              ]),
-            ]),
-          ),
-        );
-      }),
-    ));
+    showBookingDialog(
+      context: context,
+      api: _api,
+      doctorId: _api.userId,
+      clinicId: _clinicId,
+      onBooked: _fetchData,
+    );
   }
 
   // ─── NOTIFICATION PANEL ─────────────────────────────
@@ -1947,28 +1768,6 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
     decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100)),
     child: Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: color)),
-  );
-
-  Widget _smallBtn(String label, Color bg, Color fg, VoidCallback onTap) => InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(6),
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-      child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: fg)),
-    ),
-  );
-
-  Widget _primaryBtn(String label, IconData? icon, VoidCallback onTap) => ElevatedButton(
-    onPressed: onTap,
-    style: ElevatedButton.styleFrom(backgroundColor: cPrimary, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-    child: icon != null ? Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14), const SizedBox(width: 5), Text(label)]) : Text(label),
-  );
-
-  Widget _outlineBtn(String label, IconData? icon, VoidCallback onTap) => OutlinedButton(
-    onPressed: onTap,
-    style: OutlinedButton.styleFrom(foregroundColor: cFg, side: const BorderSide(color: cBorder), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
-    child: icon != null ? Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14), const SizedBox(width: 5), Text(label)]) : Text(label),
   );
 
   Widget _textField(String label, TextEditingController controller, {String? Function(String?)? validator}) {

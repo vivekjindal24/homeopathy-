@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../core/shared_widgets.dart';
 import '../../services/api_service.dart';
 import 'queue_management.dart' show showRecordPaymentDialog;
-
-double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
 
 class BillingInvoice extends StatefulWidget {
   final String? clinicId;
@@ -236,8 +235,8 @@ class _BillingInvoiceState extends State<BillingInvoice> {
     int unpaidCount = 0;
 
     for (var inv in _invoices) {
-      totalPaid += _parseAmount(inv['paid_amount']);
-      totalDue += _parseAmount(inv['due_amount']);
+      totalPaid += parseAmount(inv['paid_amount']);
+      totalDue += parseAmount(inv['due_amount']);
       if (inv['status'] == InvoiceStatus.paid) {
         paidCount++;
       } else {
@@ -324,8 +323,8 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                                   final inv = _invoices[index];
                                   final patientName =
                                       inv['patient']?['full_name'] ?? inv['patient_id'] ?? 'Walk-In';
-                                  final total = _parseAmount(inv['total_amount']);
-                                  final due = _parseAmount(inv['due_amount']);
+                                  final total = parseAmount(inv['total_amount']);
+                                  final due = parseAmount(inv['due_amount']);
                                   final status = '${inv['status'] ?? InvoiceStatus.draft}';
                                   final invIdStr = '${inv['invoice_id'] ?? ''}';
 

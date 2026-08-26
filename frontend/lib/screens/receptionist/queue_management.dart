@@ -1,13 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../core/shared_widgets.dart';
 import '../../services/api_service.dart';
-
-double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
-
-String _shortId(dynamic id) {
-  final s = '${id ?? ''}';
-  return s.length > 8 ? s.substring(0, 8).toUpperCase() : s.toUpperCase();
-}
 
 /// PRD §5.4.3/§5.4.5 — working invoice creation + issuance + payment hook.
 ///
@@ -61,10 +55,10 @@ Future<void> showProcessBillingDialog(
 
       void recalc(void Function(void Function()) setD) {
         setD(() {
-          total = _parseAmount(consController.text) +
-              _parseAmount(medController.text) +
-              _parseAmount(miscController.text) -
-              _parseAmount(discController.text);
+          total = parseAmount(consController.text) +
+              parseAmount(medController.text) +
+              parseAmount(miscController.text) -
+              parseAmount(discController.text);
         });
       }
 
@@ -178,10 +172,10 @@ Future<void> showProcessBillingDialog(
                           'patient_id': selectedPatientId,
                           if (apptId != null) 'appt_id': apptId,
                           'consultation_fee':
-                              _parseAmount(consController.text),
-                          'medicine_charges': _parseAmount(medController.text),
-                          'misc_charges': _parseAmount(miscController.text),
-                          'discount': _parseAmount(discController.text),
+                              parseAmount(consController.text),
+                          'medicine_charges': parseAmount(medController.text),
+                          'misc_charges': parseAmount(miscController.text),
+                          'discount': parseAmount(discController.text),
                         });
                         final invoiceId = created['invoice_id'];
                         await api.issueInvoice(invoiceId);
@@ -190,10 +184,10 @@ Future<void> showProcessBillingDialog(
                         if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                             content: Text(
-                                'Invoice #${_shortId(invoiceId)} issued.')));
+                                'Invoice #${shortId(invoiceId)} issued.')));
                         final inv = await api.getInvoice(invoiceId);
                         if (context.mounted &&
-                            _parseAmount(inv['due_amount']) > 0) {
+                            parseAmount(inv['due_amount']) > 0) {
                           final paidNow =
                               await showRecordPaymentDialog(
                                   context, api, inv);
@@ -224,7 +218,7 @@ Future<bool> showRecordPaymentDialog(
   ApiService api,
   Map<String, dynamic> inv,
 ) async {
-  final due = _parseAmount(inv['due_amount']);
+  final due = parseAmount(inv['due_amount']);
   final amountCtrl = TextEditingController(text: due.toStringAsFixed(2));
   final txCtrl = TextEditingController();
   String mode = PaymentMode.cash;
@@ -235,13 +229,13 @@ Future<bool> showRecordPaymentDialog(
     context: context,
     builder: (dialogCtx) => StatefulBuilder(
       builder: (ctx, setD) => AlertDialog(
-        title: Text('Collect Payment · #${_shortId(inv['invoice_id'])}',
+        title: Text('Collect Payment · #${shortId(inv['invoice_id'])}',
             style: const TextStyle(fontWeight: FontWeight.bold)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-                'Total: ₹${_parseAmount(inv['total_amount']).toStringAsFixed(0)}  ·  Due: ₹${due.toStringAsFixed(0)}',
+                'Total: ₹${parseAmount(inv['total_amount']).toStringAsFixed(0)}  ·  Due: ₹${due.toStringAsFixed(0)}',
                 style:
                     const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             const SizedBox(height: 14),
@@ -280,7 +274,7 @@ Future<bool> showRecordPaymentDialog(
             onPressed: submitting
                 ? null
                 : () async {
-                    final amt = _parseAmount(amountCtrl.text);
+                    final amt = parseAmount(amountCtrl.text);
                     if (amt <= 0) {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                           content: Text('Enter an amount greater than 0.'),

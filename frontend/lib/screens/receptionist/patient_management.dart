@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../services/api_service.dart';
+import '../../core/shared_dialogs.dart';
 
 class PatientManagement extends StatefulWidget {
   final String? clinicId;
@@ -243,92 +244,13 @@ class _PatientManagementState extends State<PatientManagement> {
       return;
     }
 
-    final formKey = GlobalKey<FormState>();
-    final dateController = TextEditingController(text: DateTime.now().toIso8601String().split('T')[0]);
-    final timeController = TextEditingController(text: "10:00");
-
-    String visitType = VisitType.newVisit; // New / Follow-Up / Walk-In
-    String doctorId = _apiService.userId!;
-    bool submitting = false;
-
-    showDialog(
+    showBookingDialog(
       context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: Text('Book Appointment for ${patient['full_name']}', style: const TextStyle(fontWeight: FontWeight.bold)),
-            content: Form(
-              key: formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: dateController,
-                    decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD) *'),
-                    validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: timeController,
-                    decoration: const InputDecoration(labelText: 'Time (HH:MM) *'),
-                    validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: visitType,
-                    decoration: const InputDecoration(labelText: 'Visit Type *'),
-                    items: const [
-                      DropdownMenuItem(value: VisitType.newVisit, child: Text('New Consultation')),
-                      DropdownMenuItem(value: VisitType.followUp, child: Text('Follow-Up Visit')),
-                      DropdownMenuItem(value: VisitType.walkIn, child: Text('Walk-In Conversion')),
-                    ],
-                    onChanged: (val) => visitType = val ?? VisitType.newVisit,
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: submitting ? null : () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: submitting
-                    ? null
-                    : () async {
-                        if (formKey.currentState!.validate()) {
-                          setDialogState(() => submitting = true);
-                          try {
-                            await _apiService.createAppointment({
-                              'patient_id': patient['patient_id'],
-                              'doctor_id': doctorId,
-                              'clinic_id': widget.clinicId,
-                              'appt_date': dateController.text,
-                              'appt_time': timeController.text,
-                              'visit_type': visitType,
-                            });
-                            if (!context.mounted) return;
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(this.context).showSnackBar(
-                              const SnackBar(content: Text('Appointment booked successfully.')),
-                            );
-                          } on ApiException catch (e) {
-                            if (!context.mounted) return;
-                            setDialogState(() => submitting = false);
-                            ScaffoldMessenger.of(this.context).showSnackBar(
-                              SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-                            );
-                          }
-                        }
-                      },
-                child: submitting
-                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Book Slot'),
-              ),
-            ],
-          ),
-        );
-      },
+      api: _apiService,
+      doctorId: _apiService.userId,
+      clinicId: widget.clinicId,
+      onBooked: _fetchPatients,
+      preselectedPatientId: patient['patient_id'] as String?,
     );
   }
 

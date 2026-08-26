@@ -6,15 +6,7 @@ import '../../core/csv_export.dart';
 
 import '../../core/constants.dart';
 import '../../services/api_service.dart';
-
-// ─── Color System ────────────────────────────────────
-const cBg       = Color(0xFFF8FAFC);
-const cCard     = Color(0xFFFFFFFF);
-const cBorder   = Color(0x1A000000);
-const cFg       = Color(0xFF0F172A);
-const cMuted    = Color(0xFF717182);
-const cMutedBg  = Color(0xFFECECF0);
-const cPrimary  = Color(0xFF0F766E);
+import '../components/charts.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -1089,47 +1081,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   else
                     SizedBox(
                       height: 200,
-                      child: LayoutBuilder(builder: (context, constraints) {
-                        final maxRev = _revenue.fold<num>(
-                            0, (m, r) => (r['revenue'] as num?) != null && (r['revenue'] as num) > m ? r['revenue'] : m);
-                        final n = _revenue.length;
-                        final barW = n > 0 ? (constraints.maxWidth / n).clamp(4.0, 36.0) : 4.0;
-                        return ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: n,
-                          separatorBuilder: (_, __) => const SizedBox(width: 4),
-                          itemBuilder: (context, i) {
-                            final row = _revenue[i];
-                            final rev = (row['revenue'] as num?) ?? 0;
-                            final h = maxRev > 0 ? (rev / maxRev * 180).clamp(2.0, 180.0) : 2.0;
-                            final d = DateTime.tryParse(row['date']?.toString() ?? '');
-                            return Tooltip(
-                              message: '${row['date']}\n₹${rev.toStringAsFixed(0)} · ${row['payments_count'] ?? 0} payments',
-                              child: SizedBox(
-                                width: barW,
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Container(
-                                      width: barW,
-                                      height: h,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primary.withValues(alpha: 0.85),
-                                        borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
-                                      ),
-                                    ),
-                                    if (n <= 20 && d != null) ...[
-                                      const SizedBox(height: 4),
-                                      Text('${d.day}/${d.month}',
-                                          style: TextStyle(fontSize: 8, color: cMuted)),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      }),
+                      child: BarChartWidget(
+                        data: _revenue.map((row) => {
+                          'label': (row['date'] ?? '').toString().substring(5),
+                          'value': ((row['revenue'] as num?) ?? 0).toDouble(),
+                        }).toList(),
+                        xKey: 'label',
+                        yKey: 'value',
+                        barColor: AppColors.primary,
+                      ),
                     ),
                 ],
               ),

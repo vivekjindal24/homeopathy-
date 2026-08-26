@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../core/shared_widgets.dart';
 import '../../services/api_service.dart';
 
 class ReportsManagement extends StatefulWidget {
@@ -39,8 +40,6 @@ class _ReportsManagementState extends State<ReportsManagement> {
     }
   }
 
-  double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
-
   @override
   Widget build(BuildContext context) {
     double totalCollected = 0;
@@ -51,7 +50,7 @@ class _ReportsManagementState extends State<ReportsManagement> {
     // Aggregate from invoices
     final Map<String, double> dailyRevenue = {};
     for (final inv in _invoices) {
-      final dueAmt = _parseAmount(inv['due_amount']);
+      final dueAmt = parseAmount(inv['due_amount']);
       if (dueAmt > 0) pendingDuesCount++;
       totalAppointments++;
       final status = '${inv['status'] ?? ''}';
@@ -61,7 +60,7 @@ class _ReportsManagementState extends State<ReportsManagement> {
         final paidAt = '${p['paid_at'] ?? ''}';
         if (paidAt.length >= 10) {
           final day = paidAt.substring(0, 10);
-          final amt = _parseAmount(p['amount']);
+          final amt = parseAmount(p['amount']);
           dailyRevenue[day] = (dailyRevenue[day] ?? 0) + amt;
         }
       }
@@ -72,7 +71,7 @@ class _ReportsManagementState extends State<ReportsManagement> {
     _revenueData = sortedDays.map((d) => {'date': d, 'revenue': dailyRevenue[d]}).toList();
 
     for (final inv in _invoices) {
-      final dueAmt = _parseAmount(inv['due_amount']);
+      final dueAmt = parseAmount(inv['due_amount']);
       if (dueAmt > 0) pendingDuesCount++;
     }
 
@@ -81,7 +80,7 @@ class _ReportsManagementState extends State<ReportsManagement> {
     for (final inv in _invoices) {
       for (final p in (inv['payments'] as List? ?? [])) {
         final mode = '${p['payment_mode'] ?? 'Unknown'}';
-        final amt = _parseAmount(p['amount']);
+        final amt = parseAmount(p['amount']);
         modeTotals[mode] = (modeTotals[mode] ?? 0) + amt;
         totalCollected += amt;
       }
@@ -245,7 +244,7 @@ class _ReportsManagementState extends State<ReportsManagement> {
     // Show up to last 14 days of revenue data
     final displayData = _revenueData.length > 14 ? _revenueData.sublist(_revenueData.length - 14) : _revenueData;
     final maxVal = displayData.fold<double>(0, (max, p) {
-      final rev = _parseAmount(p['revenue']);
+      final rev = parseAmount(p['revenue']);
       return rev > max ? rev : max;
     });
     if (maxVal == 0) return const Center(child: Text('No data', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))));
@@ -253,7 +252,7 @@ class _ReportsManagementState extends State<ReportsManagement> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: displayData.map((p) {
-        final rev = _parseAmount(p['revenue']);
+        final rev = parseAmount(p['revenue']);
         final day = '${p['date'] ?? ''}';
         final label = day.length >= 10 ? day.substring(8, 10) : day;
         return Expanded(

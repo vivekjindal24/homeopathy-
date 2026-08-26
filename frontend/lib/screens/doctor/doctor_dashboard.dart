@@ -3,49 +3,9 @@ import 'dart:html' as html;
 import 'package:excel/excel.dart' hide Border;
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../core/shared_widgets.dart';
 import '../../services/api_service.dart';
-
-// ─── Shared Color System (same as receptionist) ───────
-const cBg       = Color(0xFFF8FAFC);
-const cCard     = Color(0xFFFFFFFF);
-const cBorder   = Color(0x1A000000);
-const cFg       = Color(0xFF0F172A);
-const cMuted    = Color(0xFF717182);
-const cMutedBg  = Color(0xFFECECF0);
-const cAccent   = Color(0xFFE9EBEF);
-const cPrimary  = Color(0xFF0F766E);
-const cAmber50  = Color(0xFFFFFBEB);
-const cAmber100 = Color(0xFFFEF3C7);
-const cAmber200 = Color(0xFFFDE68A);
-const cAmber700 = Color(0xFFB45309);
-const cBlue50   = Color(0xFFEFF6FF);
-const cBlue100  = Color(0xFFDBEAFE);
-const cBlue700  = Color(0xFF1D4ED8);
-const cEm50     = Color(0xFFECFDF5);
-const cEm100    = Color(0xFFD1FAE5);
-const cEm200    = Color(0xFFA7F3D0);
-const cEm600    = Color(0xFF059669);
-const cEm700    = Color(0xFF047857);
-const cRed50    = Color(0xFFFEF2F2);
-const cRed100   = Color(0xFFFEE2E2);
-const cRed600   = Color(0xFFDC2626);
-const cSlate50  = Color(0xFFF8FAFC);
-const cSlate100 = Color(0xFFF1F5F9);
-const cSlate200 = Color(0xFFE2E8F0);
-const cSlate400 = Color(0xFF94A3B8);
-const cSlate600 = Color(0xFF475569);
-const cPurple50 = Color(0xFFFAF5FF);
-const cPurple100= Color(0xFFEDE9FE);
-const cPurple700= Color(0xFF7E22CE);
-const cOrange50 = Color(0xFFFFF7ED);
-const cOrange500= Color(0xFFF97316);
-
-double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
-
-String _shortId(dynamic id) {
-  final s = '${id ?? ''}';
-  return s.length > 8 ? s.substring(0, 8).toUpperCase() : s.toUpperCase();
-}
+import '../components/charts.dart';
 
 class DoctorDashboard extends StatefulWidget {
   const DoctorDashboard({super.key});
@@ -225,7 +185,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         const SizedBox(height: 12),
         Text(_error ?? 'Something went wrong', style: const TextStyle(fontSize: 13, color: cFg), textAlign: TextAlign.center),
         const SizedBox(height: 16),
-        _primaryBtn('Retry', Icons.refresh_rounded, _fetchData),
+        primaryBtn('Retry', Icons.refresh_rounded, _fetchData),
       ]),
     ));
   }
@@ -334,21 +294,9 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
           Text(meta['title']!, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cFg)),
           Text(meta['subtitle']!, style: const TextStyle(fontSize: 11, color: cMuted)),
         ])),
-        SizedBox(
-          width: 240, height: 34,
-          child: TextField(
-            onChanged: (v) => setState(() => _searchQ = v),
-            style: const TextStyle(fontSize: 12, color: cFg),
-            decoration: InputDecoration(
-              hintText: 'Search patients, records…',
-              hintStyle: const TextStyle(fontSize: 12, color: cMuted),
-              prefixIcon: const Icon(Icons.search_rounded, size: 16, color: cMuted),
-              filled: true, fillColor: cMutedBg,
-              contentPadding: EdgeInsets.zero,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-            ),
-          ),
+        searchField(
+          hint: 'Search patients, records…',
+          onChanged: (v) => setState(() => _searchQ = v),
         ),
         const SizedBox(width: 12),
         Text(dateStr, style: const TextStyle(fontSize: 11, color: cMuted)),
@@ -436,7 +384,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             Text('Today · ${DateTime.now().weekday == 1 ? "Monday" : DateTime.now().weekday == 2 ? "Tuesday" : DateTime.now().weekday == 3 ? "Wednesday" : DateTime.now().weekday == 4 ? "Thursday" : DateTime.now().weekday == 5 ? "Friday" : DateTime.now().weekday == 6 ? "Saturday" : "Sunday"}, ${_date}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: cFg)),
             const Text('Operational snapshot for Vijay Nagar branch', style: TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          _outlineBtn('Refresh', Icons.refresh_rounded, _fetchData),
+          outlineBtn('Refresh', Icons.refresh_rounded, _fetchData),
         ]),
         const SizedBox(height: 20),
 
@@ -519,9 +467,6 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   Widget _buildRevenueChart() {
     final series = _revenueSeries();
-    final data = series.map((s) => s['value'] as double).toList();
-    final days = series.map((s) => s['label'] as String).toList();
-    final maxVal = data.reduce((a, b) => a > b ? a : b);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
@@ -538,19 +483,9 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         const SizedBox(height: 20),
         SizedBox(
           height: 140,
-          child: maxVal == 0
+          child: series.isEmpty
               ? const Center(child: Text('No revenue recorded in the last 7 days', style: TextStyle(fontSize: 11, color: cMuted)))
-              : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  for (int i = 0; i < data.length; i++) ...[
-                    Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Container(height: (data[i] / maxVal) * 120, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))),
-                      const SizedBox(height: 6),
-                      Text(days[i], style: const TextStyle(fontSize: 9, color: cMuted)),
-                    ])),
-                    if (i < data.length - 1) const SizedBox(width: 4),
-                  ],
-                ],
-              ),
+              : BarChartWidget(data: series, xKey: 'label', yKey: 'value'),
         ),
       ]),
     );
@@ -677,7 +612,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(children: [
-                    Expanded(flex: 2, child: Text(_shortId(invId).isEmpty ? '—' : _shortId(invId), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
+                    Expanded(flex: 2, child: Text(shortId(invId).isEmpty ? '—' : shortId(invId), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
                     Expanded(flex: 3, child: Text(patientName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                     Expanded(flex: 2, child: Text('₹${total.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
                     Expanded(flex: 2, child: Text('₹${due.toStringAsFixed(0)}', style: TextStyle(fontSize: 11, color: due > 0 ? cRed600 : cEm700))),
@@ -730,9 +665,9 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   }
 
   Widget _buildApptTrendCard() {
-    final trend = [142.0, 168.0, 156.0, 191.0, 204.0, 188.0];
+    final trendData = [142.0, 168.0, 156.0, 191.0, 204.0, 188.0];
     final weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6'];
-    final maxVal = trend.reduce((a, b) => a > b ? a : b);
+    final series = [for (int i = 0; i < trendData.length; i++) {'label': weeks[i], 'value': trendData[i]}];
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
@@ -742,16 +677,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         const SizedBox(height: 16),
         SizedBox(
           height: 100,
-          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            for (int i = 0; i < trend.length; i++) ...[
-              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                Container(height: (trend[i] / maxVal) * 80, decoration: BoxDecoration(color: cPrimary.withOpacity(0.8), borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))),
-                const SizedBox(height: 4),
-                Text(weeks[i], style: const TextStyle(fontSize: 9, color: cMuted)),
-              ])),
-              if (i < trend.length - 1) const SizedBox(width: 4),
-            ],
-          ]),
+          child: BarChartWidget(data: series, xKey: 'label', yKey: 'value'),
         ),
         const SizedBox(height: 16),
         const Divider(height: 1, color: cBorder),
@@ -772,12 +698,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   // ─── TAB 2: PATIENTS ─────────────────────────────────
   Widget _buildPatientsTab() {
-    final filtered = _patients.where((p) {
-      if (_searchQ.isEmpty) return true;
-      final name = (p['full_name'] ?? '').toLowerCase();
-      final mobile = (p['mobile_number'] ?? '').toLowerCase();
-      return name.contains(_searchQ.toLowerCase()) || mobile.contains(_searchQ.toLowerCase());
-    }).toList();
+    final filtered = filterPatientsLocal(_patients, _searchQ);
 
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -787,7 +708,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             const Text('Patients', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
             Text('${filtered.length} total patients', style: const TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          _outlineBtn('Export', Icons.download_rounded, _exportPatientsCsv),
+          outlineBtn('Export', Icons.download_rounded, _exportPatientsCsv),
         ]),
         const SizedBox(height: 16),
         Expanded(
@@ -831,7 +752,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                               Expanded(flex: 2, child: Text(p['unique_patient_id'] ?? '—', style: const TextStyle(fontSize: 11, color: cPrimary, fontFamily: 'monospace'))),
                               Expanded(flex: 2, child: Text(p['mobile_number'] ?? '—', style: const TextStyle(fontSize: 11, color: cFg))),
                               Expanded(flex: 2, child: _statusPill('active')),
-                              Expanded(flex: 2, child: _smallBtn('View Profile', cPrimary.withOpacity(0.1), cPrimary, () => _showPatientProfile(p))),
+                              Expanded(flex: 2, child: smallBtn('View Profile', cPrimary.withOpacity(0.1), cPrimary, () => _showPatientProfile(p))),
                             ]),
                           );
                         },
@@ -891,9 +812,9 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                               Expanded(flex: 2, child: Text(a['visit_type'] ?? '—', style: const TextStyle(fontSize: 11, color: cMuted))),
                               Expanded(flex: 2, child: _statusPill(status)),
                               Expanded(flex: 2, child: Row(children: [
-                                if (status == AppointmentStatus.arrived) _smallBtn('Start', cPrimary.withOpacity(0.1), cPrimary, () { _updateStatus(a['appt_id'], AppointmentStatus.inConsultation); setState(() { _activeConsultAppt = a; _tab = 'consultations'; }); }),
-                                if (status == AppointmentStatus.inConsultation) _smallBtn('Resume', cBlue50, cBlue700, () => setState(() { _activeConsultAppt = a; _tab = 'consultations'; })),
-                                if (status == AppointmentStatus.inConsultation) ...[const SizedBox(width: 4), _smallBtn('Complete', cEm50, cEm700, () => _updateStatus(a['appt_id'], AppointmentStatus.completed))],
+                                if (status == AppointmentStatus.arrived) smallBtn('Start', cPrimary.withOpacity(0.1), cPrimary, () { _updateStatus(a['appt_id'], AppointmentStatus.inConsultation); setState(() { _activeConsultAppt = a; _tab = 'consultations'; }); }),
+                                if (status == AppointmentStatus.inConsultation) smallBtn('Resume', cBlue50, cBlue700, () => setState(() { _activeConsultAppt = a; _tab = 'consultations'; })),
+                                if (status == AppointmentStatus.inConsultation) ...[const SizedBox(width: 4), smallBtn('Complete', cEm50, cEm700, () => _updateStatus(a['appt_id'], AppointmentStatus.completed))],
                               ])),
                             ]),
                           );
@@ -956,7 +877,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                 Text('Token $token · $apptDate · Started $apptTime · $visitType', style: const TextStyle(fontSize: 11, color: cMuted)),
               ]),
             ])),
-            _primaryBtn('Finalize & Prescribe', Icons.description_outlined, () {
+            primaryBtn('Finalize & Prescribe', Icons.description_outlined, () {
               Navigator.pushNamed(context, '/prescription', arguments: appt);
             }),
           ]),
@@ -1080,7 +1001,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             Text('Prescriptions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
             Text('Digital Rx · A5 print-ready', style: TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          _primaryBtn('New Prescription', Icons.add_rounded, () {
+          primaryBtn('New Prescription', Icons.add_rounded, () {
             if (_activeConsultAppt != null) Navigator.pushNamed(context, '/prescription', arguments: _activeConsultAppt);
           }),
         ]),
@@ -1104,7 +1025,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   Widget _buildBillingTab() {
     final isOverdue = (dynamic inv) =>
-        inv['status'] == InvoiceStatus.issued && _parseAmount(inv['due_amount']) > 0;
+        inv['status'] == InvoiceStatus.issued && parseAmount(inv['due_amount']) > 0;
     final statusFilters = ['All', InvoiceStatus.paid, InvoiceStatus.partiallyPaid, _overdueFilter, InvoiceStatus.draft];
     final metrics = [
       {'label': 'Total Invoices', 'value': '${_invoices.length}', 'icon': Icons.receipt_long_outlined, 'ic': cPrimary, 'ibg': cEm50},
@@ -1159,7 +1080,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                         child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _billingFilter == f ? cPrimary : cMutedBg, borderRadius: BorderRadius.circular(6)), child: Text(f, style: TextStyle(fontSize: 11, color: _billingFilter == f ? Colors.white : cMuted))),
                       ),
                     )).toList())),
-                    _primaryBtn('New Invoice', Icons.add_rounded, _openNewInvoiceDialog),
+                    primaryBtn('New Invoice', Icons.add_rounded, _openNewInvoiceDialog),
                   ]),
                 ),
                 const Divider(height: 1, color: cBorder),
@@ -1174,12 +1095,12 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       child: Row(children: [
-                        Expanded(flex: 2, child: Text(_shortId(inv['invoice_id']), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
+                        Expanded(flex: 2, child: Text(shortId(inv['invoice_id']), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
                         Expanded(flex: 3, child: Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                         Expanded(flex: 2, child: Text('₹${(amount ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
                         Expanded(flex: 2, child: Text('₹${(amount ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 11, color: cEm700))),
                         Expanded(flex: 2, child: _statusPill(status.toLowerCase())),
-                        Expanded(flex: 2, child: _smallBtn('View', cSlate100, cSlate600, () => _showInvoiceDetail(inv))),
+                        Expanded(flex: 2, child: smallBtn('View', cSlate100, cSlate600, () => _showInvoiceDetail(inv))),
                       ]),
                     );
                   },
@@ -1279,14 +1200,15 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     // Sort by date descending, take last 7
     final sortedDays = dailyRevenue.keys.toList()..sort();
     final last7 = sortedDays.length > 7 ? sortedDays.sublist(sortedDays.length - 7) : sortedDays;
-    final data = last7.map((d) => dailyRevenue[d]!).toList();
-    final days = last7.map((d) {
-      try {
-        final dt = DateTime.parse(d);
-        return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.weekday % 7];
-      } catch (_) { return d.substring(5); }
+    final series = last7.map((d) => {
+      'label': (() {
+        try {
+          final dt = DateTime.parse(d);
+          return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.weekday % 7];
+        } catch (_) { return d.substring(5); }
+      })(),
+      'value': dailyRevenue[d]!,
     }).toList();
-    final maxVal = data.isNotEmpty ? data.reduce((a, b) => a > b ? a : b) : 1.0;
 
     // Compute total stats
     double totalRevenue = 0;
@@ -1328,22 +1250,10 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                 const Text('Revenue Trend', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
                 const Text('Last 7 days with payments · in ₹', style: TextStyle(fontSize: 11, color: cMuted)),
                 const SizedBox(height: 16),
-                if (data.isEmpty)
+                if (series.isEmpty)
                   const Expanded(child: Center(child: Text('No revenue data yet', style: TextStyle(fontSize: 12, color: cMuted))))
                 else
-                  Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    for (int i = 0; i < data.length; i++) ...[
-                      Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                        Tooltip(
-                          message: '₹${data[i].toStringAsFixed(0)}',
-                          child: Container(height: (data[i] / maxVal) * 200, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(6)))),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(days[i], style: const TextStyle(fontSize: 9, color: cMuted)),
-                      ])),
-                      if (i < data.length - 1) const SizedBox(width: 6),
-                    ],
-                  ])),
+                  Expanded(child: BarChartWidget(data: series, xKey: 'label', yKey: 'value')),
               ]),
             )),
             const SizedBox(width: 16),
@@ -1425,7 +1335,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                               Expanded(flex: 1, child: Text(timeStr, style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cMuted))),
                               Expanded(flex: 2, child: Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3), decoration: BoxDecoration(color: cSlate100, borderRadius: BorderRadius.circular(4)), child: Text(action, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, fontFamily: 'monospace', color: cSlate600)))),
                               Expanded(flex: 2, child: Text(entityType, style: const TextStyle(fontSize: 11, color: cFg))),
-                              Expanded(flex: 2, child: Text(_shortId(entityId), style: const TextStyle(fontSize: 11, color: cPrimary, fontFamily: 'monospace'))),
+                              Expanded(flex: 2, child: Text(shortId(entityId), style: const TextStyle(fontSize: 11, color: cPrimary, fontFamily: 'monospace'))),
                               Expanded(flex: 3, child: Text(detail, style: const TextStyle(fontSize: 11, color: cMuted), maxLines: 1, overflow: TextOverflow.ellipsis)),
                             ]),
                           );
@@ -1453,9 +1363,9 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Profile', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
               const Divider(height: 20, color: cBorder),
-              _settingsRow('Full Name', _api.fullName ?? 'Dr. V.K. Verma'),
-              _settingsRow('Role', 'Doctor / Administrator'),
-              _settingsRow('Clinic', 'Verma Homeopathy · Indore'),
+              settingsRow('Full Name', _api.fullName ?? 'Dr. V.K. Verma'),
+              settingsRow('Role', 'Doctor / Administrator'),
+              settingsRow('Clinic', 'Verma Homeopathy · Indore'),
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: _signOut,
@@ -1471,9 +1381,9 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('System', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
               const Divider(height: 20, color: cBorder),
-              _settingsRow('API Endpoint', _api.baseUrl),
-              _settingsRow('Version', 'HCMS v2.0'),
-              _settingsRow('Theme', 'Light'),
+              settingsRow('API Endpoint', _api.baseUrl),
+              settingsRow('Version', 'HCMS v2.0'),
+              settingsRow('Theme', 'Light'),
             ]),
           )),
         ]),
@@ -1488,60 +1398,19 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     Text(sub, style: const TextStyle(fontSize: 12, color: cMuted)),
   ]));
 
-  Widget _settingsRow(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(label, style: const TextStyle(fontSize: 12, color: cMuted)),
-      Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg)),
-    ]),
-  );
-
-  // ─── SHARED HELPERS ──────────────────────────────────
   Widget _statusPill(String status) {
-    final Map<String, List<Color>> pm = {
-      AppointmentStatus.scheduled.toLowerCase(): [cSlate100, cSlate600],
-      AppointmentStatus.arrived.toLowerCase(): [cBlue50, cBlue700],
-      AppointmentStatus.inConsultation.toLowerCase(): [cAmber50, cAmber700],
-      AppointmentStatus.completed.toLowerCase(): [cEm50, cEm700],
-      AppointmentStatus.cancelled.toLowerCase(): [cRed50, cRed600],
-      AppointmentStatus.noShow.toLowerCase(): [cSlate100, cSlate600],
-      InvoiceStatus.paid.toLowerCase(): [cEm50, cEm700],
-      InvoiceStatus.partiallyPaid.toLowerCase(): [cAmber50, cAmber700],
-      InvoiceStatus.draft.toLowerCase(): [cSlate100, cSlate600],
-      InvoiceStatus.issued.toLowerCase(): [cBlue50, cBlue700],
-      VisitType.followUp.toLowerCase(): [cPurple50, cPurple700],
-      VisitType.newVisit.toLowerCase(): [cEm50, cEm700],
-      VisitType.walkIn.toLowerCase(): [cOrange50, cOrange500],
-    };
-    final colors = pm[status.toLowerCase()] ?? [cSlate100, cMuted];
+    final color = statusColor(status);
+    final bg = statusBg(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: colors[0], borderRadius: BorderRadius.circular(100), border: Border.all(color: colors[1].withOpacity(0.2))),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100), border: Border.all(color: color.withOpacity(0.2))),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 5, height: 5, decoration: BoxDecoration(color: colors[1].withOpacity(0.8), borderRadius: BorderRadius.circular(100))),
+        Container(width: 5, height: 5, decoration: BoxDecoration(color: color.withOpacity(0.8), borderRadius: BorderRadius.circular(100))),
         const SizedBox(width: 5),
-        Text(status, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: colors[1])),
+        Text(status, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color)),
       ]),
     );
   }
-
-  Widget _smallBtn(String label, Color bg, Color fg, VoidCallback onTap) => InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(6),
-    child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5), decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)), child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: fg))),
-  );
-
-  Widget _primaryBtn(String label, IconData? icon, VoidCallback onTap) => ElevatedButton(
-    onPressed: onTap,
-    style: ElevatedButton.styleFrom(backgroundColor: cPrimary, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-    child: icon != null ? Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14), const SizedBox(width: 5), Text(label)]) : Text(label),
-  );
-
-  Widget _outlineBtn(String label, IconData? icon, VoidCallback onTap) => OutlinedButton(
-    onPressed: onTap,
-    style: OutlinedButton.styleFrom(foregroundColor: cFg, side: const BorderSide(color: cBorder), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
-    child: icon != null ? Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14), const SizedBox(width: 5), Text(label)]) : Text(label),
-  );
 
   void _showPatientProfile(Map<String, dynamic> p) {
     showDialog(context: context, builder: (ctx) {

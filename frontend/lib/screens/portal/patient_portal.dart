@@ -3,15 +3,6 @@ import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../services/api_service.dart';
 
-// ─── Color System ────────────────────────────────────
-const cBg       = Color(0xFFF8FAFC);
-const cCard     = Color(0xFFFFFFFF);
-const cBorder   = Color(0x1A000000);
-const cFg       = Color(0xFF0F172A);
-const cMuted    = Color(0xFF717182);
-const cMutedBg  = Color(0xFFECECF0);
-const cPrimary  = Color(0xFF0F766E);
-
 enum _PortalView { home, book, login, account }
 enum _BookStep { slot, details, confirmation }
 

@@ -55,6 +55,43 @@ class UserRoles {
   static const superAdmin = 'SuperAdmin';
 }
 
+// ─── Shorthand palette (used by all dashboards & portal) ──────
+const cBg       = Color(0xFFF8FAFC);
+const cCard     = Color(0xFFFFFFFF);
+const cBorder   = Color(0x1A000000);
+const cFg       = Color(0xFF0F172A);
+const cMuted    = Color(0xFF717182);
+const cMutedBg  = Color(0xFFECECF0);
+const cAccent   = Color(0xFFE9EBEF);
+const cPrimary  = Color(0xFF0F766E);
+
+const cAmber50  = Color(0xFFFFFBEB);
+const cAmber100 = Color(0xFFFEF3C7);
+const cAmber200 = Color(0xFFFDE68A);
+const cAmber700 = Color(0xFFB45309);
+const cBlue50   = Color(0xFFEFF6FF);
+const cBlue100  = Color(0xFFDBEAFE);
+const cBlue200  = Color(0xFFBFDBFE);
+const cBlue700  = Color(0xFF1D4ED8);
+const cEm50     = Color(0xFFECFDF5);
+const cEm100    = Color(0xFFD1FAE5);
+const cEm200    = Color(0xFFA7F3D0);
+const cEm600    = Color(0xFF059669);
+const cEm700    = Color(0xFF047857);
+const cRed50    = Color(0xFFFEF2F2);
+const cRed100   = Color(0xFFFEE2E2);
+const cRed600   = Color(0xFFDC2626);
+const cSlate50  = Color(0xFFF8FAFC);
+const cSlate100 = Color(0xFFF1F5F9);
+const cSlate200 = Color(0xFFE2E8F0);
+const cSlate400 = Color(0xFF94A3B8);
+const cSlate600 = Color(0xFF475569);
+const cPurple50 = Color(0xFFFAF5FF);
+const cPurple100= Color(0xFFEDE9FE);
+const cPurple700= Color(0xFF7E22CE);
+const cOrange50 = Color(0xFFFFF7ED);
+const cOrange500= Color(0xFFF97316);
+
 /// Shared palette extracted from the duplicated per-file color blocks.
 class AppColors {
   static const bg = Color(0xFFF8FAFC);

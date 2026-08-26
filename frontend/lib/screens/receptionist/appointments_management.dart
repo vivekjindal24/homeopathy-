@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../services/api_service.dart';
+import '../../core/shared_dialogs.dart';
 
 class AppointmentsManagement extends StatefulWidget {
   final String? clinicId;
@@ -208,145 +209,12 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
   }
 
   void _openBookAppointmentDialog() {
-    final formKey = GlobalKey<FormState>();
-    String? selectedPatientId;
-    final dateController = TextEditingController(text: widget.dateStr);
-    final timeController = TextEditingController(text: "10:00");
-    String visitType = VisitType.newVisit;
-    List<dynamic> localPatients = [];
-    bool localLoading = true;
-    String? loadError;
-
-    showDialog(
+    showBookingDialog(
       context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> load() async {
-              setDialogState(() => localLoading = true);
-              try {
-                final res = await _apiService.getPatients();
-                setDialogState(() {
-                  localPatients = res;
-                  localLoading = false;
-                });
-              } on ApiException catch (e) {
-                setDialogState(() {
-                  loadError = e.message;
-                  localLoading = false;
-                });
-              }
-            }
-
-            if (localPatients.isEmpty && localLoading && loadError == null) {
-              load();
-            }
-
-            return AlertDialog(
-              title: const Text('Book Appointment Slot', style: TextStyle(fontWeight: FontWeight.bold)),
-              content: localLoading
-                  ? const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()))
-                  : loadError != null
-                      ? SizedBox(
-                          width: 450,
-                          child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            Text('Failed to load patients: $loadError',
-                                style: const TextStyle(color: Colors.red, fontSize: 12)),
-                            const SizedBox(height: 12),
-                            ElevatedButton(onPressed: load, child: const Text('Retry')),
-                          ]),
-                        )
-                      : Form(
-                          key: formKey,
-                          child: Container(
-                            width: 450,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                DropdownButtonFormField<String>(
-                                  value: selectedPatientId,
-                                  decoration: const InputDecoration(labelText: 'Select Patient *'),
-                                  items: localPatients.map<DropdownMenuItem<String>>((p) {
-                                    return DropdownMenuItem<String>(
-                                      value: p['patient_id'],
-                                      child: Text('${p['full_name']} (${p['mobile'] ?? p['mobile_number'] ?? ''})'),
-                                    );
-                                  }).toList(),
-                                  onChanged: (val) => setDialogState(() => selectedPatientId = val),
-                                  validator: (v) => v == null ? 'Please select patient' : null,
-                                ),
-                                const SizedBox(height: 12),
-                                TextFormField(
-                                  controller: dateController,
-                                  decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD) *'),
-                                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                                ),
-                                const SizedBox(height: 12),
-                                TextFormField(
-                                  controller: timeController,
-                                  decoration: const InputDecoration(labelText: 'Time (HH:MM) *'),
-                                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                                ),
-                                const SizedBox(height: 12),
-                                DropdownButtonFormField<String>(
-                                  value: visitType,
-                                  decoration: const InputDecoration(labelText: 'Visit Type *'),
-                                  items: const [
-                                    DropdownMenuItem(value: VisitType.newVisit, child: Text('New Consultation')),
-                                    DropdownMenuItem(value: VisitType.followUp, child: Text('Follow-Up Visit')),
-                                  ],
-                                  onChanged: (val) => visitType = val ?? VisitType.newVisit,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: localLoading
-                      ? null
-                      : () async {
-                          if (formKey.currentState!.validate() && selectedPatientId != null) {
-                            if (_apiService.userId == null) {
-                              ScaffoldMessenger.of(this.context).showSnackBar(
-                                const SnackBar(content: Text('Please log in to book appointments.'), backgroundColor: Colors.red),
-                              );
-                              return;
-                            }
-                            try {
-                              await _apiService.createAppointment({
-                                'patient_id': selectedPatientId,
-                                'doctor_id': _apiService.userId!,
-                                'clinic_id': widget.clinicId,
-                                'appt_date': dateController.text.trim(),
-                                'appt_time': timeController.text.trim(),
-                                'visit_type': visitType,
-                              });
-                              if (!context.mounted) return;
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(this.context).showSnackBar(
-                                const SnackBar(content: Text('Appointment booked successfully.')),
-                              );
-                              _fetchAppointments();
-                            } on ApiException catch (e) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(this.context).showSnackBar(
-                                SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-                              );
-                            }
-                          }
-                        },
-                  child: const Text('Book Slot'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      api: _apiService,
+      doctorId: _apiService.userId,
+      clinicId: widget.clinicId,
+      onBooked: _fetchAppointments,
     );
   }
 
