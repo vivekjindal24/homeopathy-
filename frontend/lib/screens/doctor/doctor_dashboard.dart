@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:html' as html;
+import 'package:excel/excel.dart' hide Border;
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../services/api_service.dart';
@@ -1582,16 +1583,35 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   void _exportPatientsCsv() async {
     try {
       final patients = _patients;
-      final buf = StringBuffer('ID,Name,Age,Gender,Phone,Email\n');
+      final excel = Excel.createExcel();
+      final sheet = excel['Patients'];
+      excel.setDefaultSheet('Patients');
+
+      // Header row
+      sheet.appendRow([TextCellValue('Patient ID'), TextCellValue('Name'), TextCellValue('Age'), TextCellValue('Gender'), TextCellValue('Phone'), TextCellValue('Email'), TextCellValue('Address'), TextCellValue('Blood Group')]);
+
+      // Data rows
       for (final p in patients) {
-        buf.writeln('${p['unique_patient_id'] ?? ''},${p['full_name'] ?? ''},${p['age'] ?? ''},${p['gender'] ?? ''},${p['mobile_number'] ?? ''},${p['email'] ?? ''}');
+        sheet.appendRow([
+          TextCellValue('${p['unique_patient_id'] ?? ''}'),
+          TextCellValue('${p['full_name'] ?? ''}'),
+          TextCellValue('${p['age'] ?? ''}'),
+          TextCellValue('${p['gender'] ?? ''}'),
+          TextCellValue('${p['mobile_number'] ?? ''}'),
+          TextCellValue('${p['email'] ?? ''}'),
+          TextCellValue('${p['address'] ?? ''}'),
+          TextCellValue('${p['blood_group'] ?? ''}'),
+        ]);
       }
-      final bytes = utf8.encode(buf.toString());
-      final blob = html.Blob([bytes], 'text/csv');
-      final url = html.Url.createObjectUrlFromBlob(blob);
-      html.AnchorElement(href: url)..setAttribute('download', 'patients_export.csv')..click();
-      html.Url.revokeObjectUrl(url);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Patient list exported')));
+
+      final fileBytes = excel.save();
+      if (fileBytes != null) {
+        final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        html.AnchorElement(href: url)..setAttribute('download', 'patients_export.xlsx')..click();
+        html.Url.revokeObjectUrl(url);
+      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Patient list exported as Excel')));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Export failed: $e')));
     }
