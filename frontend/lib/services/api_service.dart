@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 /// Error surfaced by every ApiService call. `message` is user-displayable.
 class ApiException implements Exception {
@@ -16,13 +17,14 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Base URL resolution:
-/// 1. compile-time --dart-define=API_BASE_URL=... (recommended for deploys)
-/// 2. persisted override (Settings screen)
-/// 3. localhost default for dev
-const String kDefaultBaseUrl = String.fromEnvironment(
+/// Base URL resolution (priority order):
+/// 1. persisted override (Settings screen) — stored in SharedPreferences
+/// 2. web/config.json fetched at startup — change backend URL without rebuild
+/// 3. compile-time --dart-define=API_BASE_URL=...
+/// 4. localhost default for local dev
+const String kCompileTimeBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://localhost:8000/api/v1',
+  defaultValue: '',
 );
 
 class ApiService {
@@ -30,7 +32,7 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
-  String _baseUrl = kDefaultBaseUrl;
+  String _baseUrl = '';
   String? _token;
   String? _refreshToken;
   String? _role;
@@ -52,6 +54,25 @@ class ApiService {
       _fullName = prefs.getString('hcms_full_name');
     } catch (_) {}
     _loadedPrefs = true;
+  }
+
+  /// Fetch config.json from web root to get backend URL without rebuild.
+  Future<void> loadRemoteConfig() async {
+    if (!kIsWeb) return;
+    try {
+      final resp = await http.get(Uri.parse('config.json'));
+      if (resp.statusCode == 200) {
+        final cfg = json.decode(resp.body) as Map<String, dynamic>;
+        final url = cfg['apiBaseUrl'] as String?;
+        if (url != null && url.isNotEmpty) {
+          _baseUrl = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+        }
+      }
+    } catch (_) {}
+    // compile-time override takes precedence if set
+    if (kCompileTimeBaseUrl.isNotEmpty) {
+      _baseUrl = kCompileTimeBaseUrl;
+    }
   }
 
   Future<void> setBaseUrl(String url) async {

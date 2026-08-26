@@ -9,7 +9,9 @@ import 'screens/doctor/prescription_screen.dart';
 import 'screens/admin/admin_dashboard.dart';
 import 'screens/portal/patient_portal.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ApiService().loadRemoteConfig();
   runApp(const HcmsApp());
 }
 
