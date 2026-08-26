@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../services/api_service.dart';
@@ -784,7 +786,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             const Text('Patients', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
             Text('${filtered.length} total patients', style: const TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          _outlineBtn('Export', Icons.download_rounded, () {}),
+          _outlineBtn('Export', Icons.download_rounded, _exportPatientsCsv),
         ]),
         const SizedBox(height: 16),
         Expanded(
@@ -828,7 +830,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                               Expanded(flex: 2, child: Text(p['unique_patient_id'] ?? '—', style: const TextStyle(fontSize: 11, color: cPrimary, fontFamily: 'monospace'))),
                               Expanded(flex: 2, child: Text(p['mobile_number'] ?? '—', style: const TextStyle(fontSize: 11, color: cFg))),
                               Expanded(flex: 2, child: _statusPill('active')),
-                              Expanded(flex: 2, child: _smallBtn('View Profile', cPrimary.withOpacity(0.1), cPrimary, () {})),
+                              Expanded(flex: 2, child: _smallBtn('View Profile', cPrimary.withOpacity(0.1), cPrimary, () => _showPatientProfile(p))),
                             ]),
                           );
                         },
@@ -1156,7 +1158,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                         child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _billingFilter == f ? cPrimary : cMutedBg, borderRadius: BorderRadius.circular(6)), child: Text(f, style: TextStyle(fontSize: 11, color: _billingFilter == f ? Colors.white : cMuted))),
                       ),
                     )).toList())),
-                    _primaryBtn('New Invoice', Icons.add_rounded, () {}),
+                    _primaryBtn('New Invoice', Icons.add_rounded, _openNewInvoiceDialog),
                   ]),
                 ),
                 const Divider(height: 1, color: cBorder),
@@ -1176,7 +1178,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                         Expanded(flex: 2, child: Text('₹${(amount ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
                         Expanded(flex: 2, child: Text('₹${(amount ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 11, color: cEm700))),
                         Expanded(flex: 2, child: _statusPill(status.toLowerCase())),
-                        Expanded(flex: 2, child: _smallBtn('View', cSlate100, cSlate600, () {})),
+                        Expanded(flex: 2, child: _smallBtn('View', cSlate100, cSlate600, () => _showInvoiceDetail(inv))),
                       ]),
                     );
                   },
@@ -1538,5 +1540,128 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     onPressed: onTap,
     style: OutlinedButton.styleFrom(foregroundColor: cFg, side: const BorderSide(color: cBorder), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
     child: icon != null ? Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14), const SizedBox(width: 5), Text(label)]) : Text(label),
+  );
+
+  void _showPatientProfile(Map<String, dynamic> p) {
+    showDialog(context: context, builder: (ctx) {
+      String fmt(Object? v) => v == null ? '—' : v.toString();
+      final rows = <Map<String, String>>[
+        {'k': 'Patient ID', 'v': fmt(p['unique_patient_id'])},
+        {'k': 'Full Name', 'v': fmt(p['full_name'])},
+        {'k': 'Age', 'v': fmt(p['age'])},
+        {'k': 'Gender', 'v': fmt(p['gender'])},
+        {'k': 'Phone', 'v': fmt(p['mobile_number'])},
+        {'k': 'Email', 'v': fmt(p['email'])},
+        {'k': 'Address', 'v': fmt(p['address'])},
+        {'k': 'Blood Group', 'v': fmt(p['blood_group'])},
+        {'k': 'Allergies', 'v': fmt(p['allergies'])},
+        {'k': 'Medical History', 'v': fmt(p['medical_history'])},
+        {'k': 'Registered', 'v': fmt(p['created_at'])},
+      ];
+      return AlertDialog(
+        title: Text(fmt(p['full_name']), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
+        content: SizedBox(
+          width: 360,
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              for (final r in rows) Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  SizedBox(width: 120, child: Text(r['k']!, style: const TextStyle(fontSize: 11, color: cMuted))),
+                  Expanded(child: Text(r['v']!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+      );
+    });
+  }
+
+  void _exportPatientsCsv() async {
+    try {
+      final patients = _patients;
+      final buf = StringBuffer('ID,Name,Age,Gender,Phone,Email\n');
+      for (final p in patients) {
+        buf.writeln('${p['unique_patient_id'] ?? ''},${p['full_name'] ?? ''},${p['age'] ?? ''},${p['gender'] ?? ''},${p['mobile_number'] ?? ''},${p['email'] ?? ''}');
+      }
+      final bytes = utf8.encode(buf.toString());
+      final blob = html.Blob([bytes], 'text/csv');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      html.AnchorElement(href: url)..setAttribute('download', 'patients_export.csv')..click();
+      html.Url.revokeObjectUrl(url);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Patient list exported')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    }
+  }
+
+  void _openNewInvoiceDialog() {
+    final patientCtrl = TextEditingController();
+    final consultationFeeCtrl = TextEditingController(text: '500');
+    final medicineChargesCtrl = TextEditingController(text: '0');
+    final miscChargesCtrl = TextEditingController(text: '0');
+    final discountCtrl = TextEditingController(text: '0');
+
+    showDialog(context: context, builder: (ctx) {
+      return StatefulBuilder(builder: (ctx, setDialogState) {
+        return AlertDialog(
+          title: const Text('New Invoice', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
+          content: SizedBox(
+            width: 340,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Patient ID', labelStyle: TextStyle(fontSize: 12)),
+                  items: _patients.map((p) => DropdownMenuItem(value: p['unique_patient_id'] as String?, child: Text('${p['full_name']} (${p['unique_patient_id']})', style: const TextStyle(fontSize: 11)))).toList(),
+                  onChanged: (v) => patientCtrl.text = v ?? '',
+                ),
+                const SizedBox(height: 12),
+                _dialogField('Consultation Fee', consultationFeeCtrl),
+                const SizedBox(height: 12),
+                _dialogField('Medicine Charges', medicineChargesCtrl),
+                const SizedBox(height: 12),
+                _dialogField('Misc Charges', miscChargesCtrl),
+                const SizedBox(height: 12),
+                _dialogField('Discount', discountCtrl),
+              ]),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                if (patientCtrl.text.isEmpty) return;
+                try {
+                  await _api.createInvoice({
+                    'patient_id': patientCtrl.text,
+                    'consultation_fee': double.tryParse(consultationFeeCtrl.text) ?? 0,
+                    'medicine_charges': double.tryParse(medicineChargesCtrl.text) ?? 0,
+                    'misc_charges': double.tryParse(miscChargesCtrl.text) ?? 0,
+                    'discount': double.tryParse(discountCtrl.text) ?? 0,
+                  });
+                  if (mounted) Navigator.pop(ctx);
+                  _fetchData();
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invoice created')));
+                } catch (e) {
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: cPrimary, foregroundColor: Colors.white),
+              child: const Text('Create', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        );
+      });
+    });
+  }
+
+  Widget _dialogField(String label, TextEditingController ctrl) => TextField(
+    controller: ctrl,
+    keyboardType: TextInputType.number,
+    decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(fontSize: 12), isDense: true),
+    style: const TextStyle(fontSize: 12),
   );
 }
