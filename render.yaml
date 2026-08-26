@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: hcms-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        sync: false  # Set to your Vercel URL after frontend deploy
+      - key: ADMIN_EMAIL
+        value: admin@vermahomeopathy.com
+      - key: ADMIN_PASSWORD
+        sync: false  # Set manually for security
+      - key: DOCTOR_EMAIL
+        value: doctor@vermahomeopathy.com
+      - key: DOCTOR_PASSWORD
+        sync: false
+      - key: RECEPTIONIST_EMAIL
+        value: receptionist@vermahomeopathy.com
+      - key: RECEPTIONIST_PASSWORD
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    healthCheckPath: /api/v1/health

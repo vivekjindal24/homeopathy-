@@ -13,6 +13,14 @@ import models  # noqa: F401 — ensures all models are registered with Base.meta
 
 config = context.config
 
+# Override sqlalchemy.url from DATABASE_URL env var (for Render/Supabase)
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    # Fix for Render/Heroku where postgres:// might be used instead of postgresql://
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    config.set_main_option("sqlalchemy.url", database_url)
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
