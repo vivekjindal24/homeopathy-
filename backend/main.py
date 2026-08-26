@@ -17,9 +17,21 @@ import models, schemas, crud, auth
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
-    seed_data()
+    import sys
+    try:
+        print("[startup] Running alembic migrations...", flush=True)
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        print("[startup] Migrations complete.", flush=True)
+    except Exception as e:
+        print(f"[startup] Alembic error: {e}", file=sys.stderr, flush=True)
+        raise
+    try:
+        print("[startup] Seeding data...", flush=True)
+        seed_data()
+        print("[startup] Seed complete.", flush=True)
+    except Exception as e:
+        print(f"[startup] Seed error: {e}", file=sys.stderr, flush=True)
     yield
 
 
