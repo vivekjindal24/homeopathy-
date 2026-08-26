@@ -39,6 +39,11 @@ const cOrange500= Color(0xFFF97316);
 
 double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
 
+String _shortId(dynamic id) {
+  final s = '${id ?? ''}';
+  return s.length > 8 ? s.substring(0, 8).toUpperCase() : s.toUpperCase();
+}
+
 class DoctorDashboard extends StatefulWidget {
   const DoctorDashboard({super.key});
   @override
@@ -658,7 +663,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(children: [
-                    Expanded(flex: 2, child: Text(invId.isEmpty ? '—' : invId.substring(0, 8).toUpperCase(), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
+                    Expanded(flex: 2, child: Text(_shortId(invId).isEmpty ? '—' : _shortId(invId), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
                     Expanded(flex: 3, child: Text(patientName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                     Expanded(flex: 2, child: Text('₹${total.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
                     Expanded(flex: 2, child: Text('₹${due.toStringAsFixed(0)}', style: TextStyle(fontSize: 11, color: due > 0 ? cRed600 : cEm700))),
@@ -1155,7 +1160,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       child: Row(children: [
-                        Expanded(flex: 2, child: Text(inv['invoice_id']?.toString().substring(0, 8).toUpperCase() ?? '—', style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
+                        Expanded(flex: 2, child: Text(_shortId(inv['invoice_id']), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
                         Expanded(flex: 3, child: Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                         Expanded(flex: 2, child: Text('₹${(amount ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
                         Expanded(flex: 2, child: Text('₹${(amount ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 11, color: cEm700))),
