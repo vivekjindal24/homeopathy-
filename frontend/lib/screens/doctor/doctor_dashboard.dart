@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../core/constants.dart';
 import '../../services/api_service.dart';
-import 'prescription_screen.dart';
 
 // ─── Shared Color System (same as receptionist) ───────
 const cBg       = Color(0xFFF8FAFC);
@@ -55,6 +55,8 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   List<dynamic> _invoices = [];
   Map<String, dynamic>? _activeConsultAppt;
   String _searchQ = '';
+  String? _error;
+  DateTime? _lastFetched;
 
   final _navGroups = [
     {
@@ -115,30 +117,63 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   }
 
   Future<void> _fetchData() async {
-    setState(() => _loading = true);
-    final clinics = await _api.getClinics();
-    if (clinics.isNotEmpty) _clinicId = clinics.first['clinic_id'];
-    if (_clinicId != null) {
-      final kpis  = await _api.getKpis(_clinicId!, _date);
-      final appts = await _api.getAppointments(clinicId: _clinicId, date: _date);
-      final pts   = await _api.getPatients();
-      final invs  = await _api.getInvoices();
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final clinics = await _api.getClinics();
+      if (!mounted) return;
+      if (clinics.isNotEmpty) _clinicId = clinics.first['clinic_id'];
+      if (_clinicId == null) {
+        setState(() => _loading = false);
+        return;
+      }
+      final results = await Future.wait([
+        _api.getKpis(_clinicId!, _date),
+        _api.getAppointments(clinicId: _clinicId, date: _date),
+        _api.getPatients(),
+        _api.getInvoices(),
+        _api.getAuditLogs(),
+      ]);
+      if (!mounted) return;
+      final kpis = results[0] as Map<String, dynamic>;
+      final appts = results[1] as List<dynamic>;
+      Map<String, dynamic>? activeConsult;
+      for (final a in appts) {
+        if (a['status'] == AppointmentStatus.inConsultation) {
+          activeConsult = a;
+          break;
+        }
+      }
       setState(() {
-        if (kpis != null) _kpis = kpis;
+        _kpis = kpis;
         _appointments = appts;
-        _patients = pts;
-        _invoices = invs;
-        _activeConsultAppt = appts.isNotEmpty ? appts.firstWhere((a) => a['status'] == 'In Consultation', orElse: () => appts.first) : null;
+        _patients = results[2] as List<dynamic>;
+        _invoices = results[3] as List<dynamic>;
+        _activeConsultAppt = activeConsult;
+        _lastFetched = DateTime.now();
         _loading = false;
       });
-    } else {
-      setState(() => _loading = false);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load dashboard data. $e';
+        _loading = false;
+      });
     }
   }
 
   Future<void> _updateStatus(String apptId, String status) async {
     try {
       await _api.updateAppointmentStatus(apptId, status);
+      if (!mounted) return;
       _fetchData();
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceAll('Exception: ', '')), backgroundColor: cRed600));
@@ -146,7 +181,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   }
 
   void _signOut() {
-    _api.logout();
+    _api.logoutRemote();
     Navigator.pushReplacementNamed(context, '/');
   }
 
@@ -158,10 +193,25 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         _buildSidebar(),
         Expanded(child: Column(children: [
           _buildTopBar(),
-          Expanded(child: _loading ? const Center(child: CircularProgressIndicator(color: cPrimary)) : _buildBody()),
+          Expanded(child: _loading
+              ? const Center(child: CircularProgressIndicator(color: cPrimary))
+              : _error != null ? _buildErrorState() : _buildBody()),
         ])),
       ]),
     );
+  }
+
+  Widget _buildErrorState() {
+    return Center(child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.cloud_off_rounded, size: 40, color: cMuted),
+        const SizedBox(height: 12),
+        Text(_error ?? 'Something went wrong', style: const TextStyle(fontSize: 13, color: cFg), textAlign: TextAlign.center),
+        const SizedBox(height: 16),
+        _primaryBtn('Retry', Icons.refresh_rounded, _fetchData),
+      ]),
+    ));
   }
 
   // ─── SIDEBAR ─────────────────────────────────────────
@@ -243,10 +293,10 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                 Text('Sign Out', style: TextStyle(fontSize: 12, color: cMuted)),
               ])),
             ),
-            const Padding(padding: EdgeInsets.only(left: 8, top: 4), child: Row(children: [
+            Padding(padding: EdgeInsets.only(left: 8, top: 4), child: Row(children: [
               CircleAvatar(backgroundColor: cEm600, radius: 3),
               SizedBox(width: 6),
-              Text('Synced · 2s ago', style: TextStyle(fontSize: 11, color: cMuted)),
+              Text(_lastFetched == null ? 'Not synced' : 'Synced ${_lastFetched!.toIso8601String().substring(11, 19)}', style: TextStyle(fontSize: 11, color: cMuted)),
             ])),
           ]),
         ),
@@ -335,18 +385,22 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   // ─── TAB 1: ADMIN DASHBOARD ──────────────────────────
   Widget _buildAdminDashboard() {
-    final todayRevenue = _kpis['today_revenue'] ?? 18450.0;
-    final todayPts     = _kpis['today_patients'] ?? 46;
-    final pendingDues  = _kpis['pending_dues'] ?? 24860.0;
+    final todayRevenue = (_kpis['today_revenue'] as num?)?.toDouble() ?? 0.0;
+    final todayPts     = (_kpis['today_patients'] as num?)?.toInt() ?? 0;
+    final pendingDues  = (_kpis['pending_dues'] as num?)?.toDouble() ?? 0.0;
     final apptCount    = _appointments.length;
-    final completed    = _appointments.where((a) => a['status'] == 'Completed').length;
-    final noShow       = _appointments.where((a) => a['status'] == 'No Show').length;
+    final completed    = _appointments.where((a) => a['status'] == AppointmentStatus.completed).length;
+    final noShow       = _appointments.where((a) => a['status'] == AppointmentStatus.noShow).length;
+    final walkIns      = _appointments.where((a) => a['visit_type'] == VisitType.walkIn).length;
+    final followUps    = _appointments.where((a) => a['visit_type'] == VisitType.followUp).length;
+    final newVisits    = _appointments.where((a) => a['visit_type'] == VisitType.newVisit).length;
+    final duesCount    = _invoices.where((i) => ((i['due_amount'] ?? 0) as num) > 0).length;
 
     final kpis = [
-      {'label': 'Daily Revenue', 'value': '₹${(todayRevenue as num).toStringAsFixed(0)}', 'delta': '↑ 12.4%', 'up': true, 'hint': 'vs. 7-day average', 'icon': Icons.currency_rupee_rounded, 'iconColor': cPrimary, 'iconBg': cEm50},
-      {'label': 'Patients Today', 'value': '$todayPts', 'delta': '6 walk-ins', 'up': true, 'hint': '${completed > 0 ? completed : "--"} follow-ups · 14 new', 'icon': Icons.people_outline_rounded, 'iconColor': cMuted, 'iconBg': cMutedBg},
-      {'label': 'Appointments', 'value': '$apptCount', 'delta': '$noShow no-show', 'up': false, 'hint': '$completed completed · ${apptCount - completed} in queue', 'icon': Icons.calendar_month_outlined, 'iconColor': cMuted, 'iconBg': cMutedBg},
-      {'label': 'Pending Dues', 'value': '₹${(pendingDues as num).toStringAsFixed(0)}', 'delta': '↑ ₹3,200', 'up': false, 'hint': '9 invoices · 2 overdue', 'icon': Icons.warning_amber_rounded, 'iconColor': cAmber700, 'iconBg': cAmber50},
+      {'label': 'Daily Revenue', 'value': '₹${todayRevenue.toStringAsFixed(0)}', 'delta': '', 'up': true, 'hint': 'Collections recorded today', 'icon': Icons.currency_rupee_rounded, 'iconColor': cPrimary, 'iconBg': cEm50},
+      {'label': 'Patients Today', 'value': '$todayPts', 'delta': '$walkIns walk-ins', 'up': true, 'hint': '$followUps follow-ups · $newVisits new', 'icon': Icons.people_outline_rounded, 'iconColor': cMuted, 'iconBg': cMutedBg},
+      {'label': 'Appointments', 'value': '$apptCount', 'delta': '$noShow no-show', 'up': false, 'hint': '$completed completed · ${apptCount - completed} remaining', 'icon': Icons.calendar_month_outlined, 'iconColor': cMuted, 'iconBg': cMutedBg},
+      {'label': 'Pending Dues', 'value': '₹${pendingDues.toStringAsFixed(0)}', 'delta': '$duesCount invoices', 'up': false, 'hint': 'Across all unpaid invoices', 'icon': Icons.warning_amber_rounded, 'iconColor': cAmber700, 'iconBg': cAmber50},
     ];
 
     final recentInvs = _invoices.take(5).toList();
@@ -360,11 +414,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             Text('Today · ${DateTime.now().weekday == 1 ? "Monday" : DateTime.now().weekday == 2 ? "Tuesday" : DateTime.now().weekday == 3 ? "Wednesday" : DateTime.now().weekday == 4 ? "Thursday" : DateTime.now().weekday == 5 ? "Friday" : DateTime.now().weekday == 6 ? "Saturday" : "Sunday"}, ${_date}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: cFg)),
             const Text('Operational snapshot for Vijay Nagar branch', style: TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          Row(children: [
-            _outlineBtn('Export EOD', Icons.download_rounded, () {}),
-            const SizedBox(width: 8),
-            _primaryBtn('Open Reconciliation', null, () {}),
-          ]),
+          _outlineBtn('Refresh', Icons.refresh_rounded, _fetchData),
         ]),
         const SizedBox(height: 20),
 
@@ -383,8 +433,8 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
               const SizedBox(height: 8),
               Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Text(k['value'] as String, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: cFg, height: 1)),
-                const SizedBox(width: 6),
-                Padding(
+                if ((k['delta'] as String).isNotEmpty) const SizedBox(width: 6),
+                if ((k['delta'] as String).isNotEmpty) Padding(
                   padding: const EdgeInsets.only(bottom: 2),
                   child: Row(children: [
                     Icon((k['up'] as bool) ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 11, color: (k['up'] as bool) ? cEm600 : cRed600),
@@ -416,10 +466,39 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     );
   }
 
+  /// Daily revenue for the last 7 days, derived from real invoices
+  /// (grouped by invoice updated_at date).
+  List<Map<String, dynamic>> _revenueSeries() {
+    final now = DateTime.now();
+    final keys = <String>[];
+    final buckets = <String, double>{};
+    for (int i = 6; i >= 0; i--) {
+      final key = now.subtract(Duration(days: i)).toIso8601String().split('T')[0];
+      keys.add(key);
+      buckets[key] = 0.0;
+    }
+    for (final inv in _invoices) {
+      final raw = inv['updated_at'] ?? inv['issued_at'];
+      if (raw == null) continue;
+      final key = raw.toString().split('T').first;
+      if (buckets.containsKey(key)) {
+        buckets[key] = buckets[key]! + ((inv['total_amount'] ?? 0) as num).toDouble();
+      }
+    }
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return [
+      for (final key in keys)
+        {
+          'label': dayNames[DateTime.parse(key).weekday % 7],
+          'value': buckets[key]!,
+        }
+    ];
+  }
+
   Widget _buildRevenueChart() {
-    final data = [12400.0, 14800.0, 11200.0, 16900.0, 18450.0, 22100.0, 9800.0];
-    final expenses = [4200.0, 3800.0, 4600.0, 5100.0, 4800.0, 5400.0, 2900.0];
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final series = _revenueSeries();
+    final data = series.map((s) => s['value'] as double).toList();
+    final days = series.map((s) => s['label'] as String).toList();
     final maxVal = data.reduce((a, b) => a > b ? a : b);
     return Container(
       padding: const EdgeInsets.all(20),
@@ -427,90 +506,110 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Revenue vs. Expenses', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
-            Text('Last 7 days · in ₹', style: TextStyle(fontSize: 11, color: cMuted)),
+            Text('Revenue', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
+            Text('Last 7 days · from invoices', style: TextStyle(fontSize: 11, color: cMuted)),
           ]),
           Row(children: [
             Row(children: [Container(width: 10, height: 10, decoration: BoxDecoration(color: cPrimary, borderRadius: BorderRadius.circular(2))), const SizedBox(width: 4), const Text('Revenue', style: TextStyle(fontSize: 10, color: cMuted))]),
-            const SizedBox(width: 12),
-            Row(children: [Container(width: 10, height: 10, decoration: BoxDecoration(color: cSlate200, borderRadius: BorderRadius.circular(2))), const SizedBox(width: 4), const Text('Expenses', style: TextStyle(fontSize: 10, color: cMuted))]),
           ]),
         ]),
         const SizedBox(height: 20),
         SizedBox(
           height: 140,
-          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            for (int i = 0; i < data.length; i++) ...[
-              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Expanded(child: Container(height: (data[i] / maxVal) * 120, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(4))))),
-                  const SizedBox(width: 2),
-                  Expanded(child: Container(height: (expenses[i] / maxVal) * 120, decoration: BoxDecoration(color: cSlate200, borderRadius: const BorderRadius.vertical(top: Radius.circular(4))))),
-                ]),
-                const SizedBox(height: 6),
-                Text(days[i], style: const TextStyle(fontSize: 9, color: cMuted)),
-              ])),
-              if (i < data.length - 1) const SizedBox(width: 4),
-            ],
-          ]),
+          child: maxVal == 0
+              ? const Center(child: Text('No revenue recorded in the last 7 days', style: TextStyle(fontSize: 11, color: cMuted)))
+              : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  for (int i = 0; i < data.length; i++) ...[
+                    Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                      Container(height: (data[i] / maxVal) * 120, decoration: BoxDecoration(color: cPrimary.withOpacity(0.85), borderRadius: const BorderRadius.vertical(top: Radius.circular(4)))),
+                      const SizedBox(height: 6),
+                      Text(days[i], style: const TextStyle(fontSize: 9, color: cMuted)),
+                    ])),
+                    if (i < data.length - 1) const SizedBox(width: 4),
+                  ],
+                ],
+              ),
         ),
       ]),
     );
   }
 
   Widget _buildModeDonut() {
+    // Aggregate real payment modes from invoice payments.
+    final today = DateTime.now().toIso8601String().split('T')[0];
+    final totals = <String, double>{};
+    double grandTotal = 0;
+    for (final inv in _invoices) {
+      for (final p in (inv['payments'] ?? []) as List) {
+        final paidAt = p['paid_at']?.toString().split('T').first;
+        if (paidAt != null && paidAt != today) continue;
+        final mode = (p['payment_mode'] ?? 'Unknown') as String;
+        final amt = ((p['amount'] ?? 0) as num).toDouble();
+        totals[mode] = (totals[mode] ?? 0) + amt;
+        grandTotal += amt;
+      }
+    }
+    const modeColors = {
+      PaymentMode.cash: cPrimary,
+      PaymentMode.upi: Color(0xFF14B8A6),
+      PaymentMode.card: Color(0xFF5EEAD4),
+      PaymentMode.online: Color(0xFF99F6E4),
+    };
     final modes = [
-      {'name': 'UPI', 'pct': 48.0, 'amount': '₹8,856', 'color': cPrimary},
-      {'name': 'Cash', 'pct': 26.0, 'amount': '₹4,797', 'color': const Color(0xFF14B8A6)},
-      {'name': 'Card', 'pct': 18.0, 'amount': '₹3,321', 'color': const Color(0xFF5EEAD4)},
-      {'name': 'Net Banking', 'pct': 8.0, 'amount': '₹1,476', 'color': const Color(0xFF99F6E4)},
+      for (final mode in PaymentMode.all)
+        if (totals.containsKey(mode))
+          {
+            'name': mode,
+            'pct': grandTotal > 0 ? (totals[mode]! / grandTotal * 100) : 0.0,
+            'amount': '₹${totals[mode]!.toStringAsFixed(0)}',
+            'color': modeColors[mode] ?? cSlate400,
+          },
     ];
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('Collections by Mode', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
-        const Text('Today · ₹18,450 total', style: TextStyle(fontSize: 11, color: cMuted)),
+        Text('Today · ₹${grandTotal.toStringAsFixed(0)} total', style: const TextStyle(fontSize: 11, color: cMuted)),
         const SizedBox(height: 16),
-        // Stacked progress bar as donut substitute
-        ClipRRect(
-          borderRadius: BorderRadius.circular(100),
-          child: SizedBox(
-            height: 16,
-            child: Row(
-              children: modes.map((m) => Expanded(
-                flex: (m['pct'] as double).toInt(),
-                child: Container(color: m['color'] as Color),
-              )).toList(),
+        if (modes.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: Text('No payments recorded today', style: TextStyle(fontSize: 11, color: cMuted))),
+          )
+        else ...[
+          // Stacked progress bar as donut substitute
+          ClipRRect(
+            borderRadius: BorderRadius.circular(100),
+            child: SizedBox(
+              height: 16,
+              child: Row(
+                children: modes.map((m) => Expanded(
+                  flex: ((m['pct'] as double).toInt() + 1),
+                  child: Container(color: m['color'] as Color),
+                )).toList(),
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        ...modes.map((m) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
-          child: Row(children: [
-            Container(width: 10, height: 10, decoration: BoxDecoration(color: m['color'] as Color, borderRadius: BorderRadius.circular(2))),
-            const SizedBox(width: 8),
-            Expanded(child: Text(m['name'] as String, style: const TextStyle(fontSize: 11, color: cMuted))),
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('${(m['pct'] as double).toInt()}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: cFg)),
-              Text(m['amount'] as String, style: const TextStyle(fontSize: 9, color: cMuted)),
+          const SizedBox(height: 16),
+          ...modes.map((m) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(children: [
+              Container(width: 10, height: 10, decoration: BoxDecoration(color: m['color'] as Color, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(width: 8),
+              Expanded(child: Text(m['name'] as String, style: const TextStyle(fontSize: 11, color: cMuted))),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('${(m['pct'] as double).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: cFg)),
+                Text(m['amount'] as String, style: const TextStyle(fontSize: 9, color: cMuted)),
+              ]),
             ]),
-          ]),
-        )),
+          )),
+        ],
       ]),
     );
   }
 
   Widget _buildRecentInvoicesCard(List<dynamic> invs) {
-    final statusColors = {'paid': [cEm50, cEm700], 'partial': [cAmber50, cAmber700], 'due': [cRed50, cRed600], 'draft': [cSlate100, cSlate600]};
-    final mockInvs = [
-      {'id': 'INV-2041', 'patient': 'Anita Sharma', 'amount': '₹1,250', 'status': 'paid', 'mode': 'UPI'},
-      {'id': 'INV-2042', 'patient': 'Rohit Mehra', 'amount': '₹860', 'status': 'partial', 'mode': 'Cash'},
-      {'id': 'INV-2043', 'patient': 'Sunita Tiwari', 'amount': '₹2,400', 'status': 'paid', 'mode': 'Card'},
-      {'id': 'INV-2044', 'patient': 'Vikas Yadav', 'amount': '₹540', 'status': 'due', 'mode': '—'},
-      {'id': 'INV-2045', 'patient': 'Priya Nair', 'amount': '₹1,180', 'status': 'paid', 'mode': 'UPI'},
-    ];
     return Container(
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
       child: Column(children: [
@@ -531,31 +630,81 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
             Expanded(flex: 2, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Invoice', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
             Expanded(flex: 3, child: Text('Patient', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
             Expanded(flex: 2, child: Text('Amount', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+            Expanded(flex: 2, child: Text('Due', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
             Expanded(flex: 2, child: Text('Status', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-            Expanded(flex: 2, child: Text('Mode', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
             SizedBox(width: 16),
           ]),
         ),
         const Divider(height: 1, color: cBorder),
-        ...mockInvs.map((inv) {
-          final status = inv['status'] as String;
-          final sColors = statusColors[status] ?? [cSlate100, cMuted];
-          return Container(
-            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: cBorder))),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Row(children: [
-                Expanded(flex: 2, child: Text(inv['id'] as String, style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
-                Expanded(flex: 3, child: Text(inv['patient'] as String, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
-                Expanded(flex: 2, child: Text(inv['amount'] as String, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
-                Expanded(flex: 2, child: _statusPill(status)),
-                Expanded(flex: 2, child: Text(inv['mode'] as String, style: const TextStyle(fontSize: 11, color: cMuted))),
-              ]),
-            ),
-          );
-        }),
+        if (invs.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('No invoices found', style: TextStyle(fontSize: 12, color: cMuted))),
+          )
+        else
+          ...invs.map((inv) {
+            final status = (inv['status'] ?? InvoiceStatus.draft) as String;
+            final total = ((inv['total_amount'] ?? 0) as num).toDouble();
+            final due = ((inv['due_amount'] ?? 0) as num).toDouble();
+            final patientName = inv['patient']?['full_name'] ?? '—';
+            final invId = inv['invoice_id']?.toString() ?? '';
+            return InkWell(
+              onTap: () => _showInvoiceDetail(inv),
+              child: Container(
+                decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: cBorder))),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(children: [
+                    Expanded(flex: 2, child: Text(invId.isEmpty ? '—' : invId.substring(0, 8).toUpperCase(), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
+                    Expanded(flex: 3, child: Text(patientName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
+                    Expanded(flex: 2, child: Text('₹${total.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
+                    Expanded(flex: 2, child: Text('₹${due.toStringAsFixed(0)}', style: TextStyle(fontSize: 11, color: due > 0 ? cRed600 : cEm700))),
+                    Expanded(flex: 2, child: _statusPill(status)),
+                  ]),
+                ),
+              ),
+            );
+          }),
       ]),
     );
+  }
+
+  void _showInvoiceDetail(Map<String, dynamic> inv) {
+    showDialog(context: context, builder: (ctx) {
+      String fmt(Object? v) => v == null ? '—' : v.toString();
+      final rows = <Map<String, String>>[
+        {'k': 'Invoice ID', 'v': fmt(inv['invoice_id'])},
+        {'k': 'Status', 'v': fmt(inv['status'])},
+        {'k': 'Patient', 'v': fmt(inv['patient']?['full_name'] ?? inv['patient_id'])},
+        {'k': 'Consultation Fee', 'v': '₹${fmt(inv['consultation_fee'])}'},
+        {'k': 'Medicine Charges', 'v': '₹${fmt(inv['medicine_charges'])}'},
+        {'k': 'Misc Charges', 'v': '₹${fmt(inv['misc_charges'])}'},
+        {'k': 'Discount', 'v': '₹${fmt(inv['discount'])}'},
+        {'k': 'Total Amount', 'v': '₹${fmt(inv['total_amount'])}'},
+        {'k': 'Paid Amount', 'v': '₹${fmt(inv['paid_amount'])}'},
+        {'k': 'Due Amount', 'v': '₹${fmt(inv['due_amount'])}'},
+        {'k': 'Issued At', 'v': fmt(inv['issued_at'])},
+        {'k': 'Last Updated', 'v': fmt(inv['updated_at'])},
+      ];
+      return AlertDialog(
+        title: const Text('Invoice Detail', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
+        content: SizedBox(
+          width: 360,
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              for (final r in rows) Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  SizedBox(width: 140, child: Text(r['k']!, style: const TextStyle(fontSize: 11, color: cMuted))),
+                  Expanded(child: Text(r['v']!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+      );
+    });
   }
 
   Widget _buildApptTrendCard() {
@@ -711,18 +860,18 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                         itemBuilder: (_, i) {
                           final a = _appointments[i];
                           final name = a['patient']?['full_name'] ?? 'Walk-In';
-                          final status = a['status'] ?? 'Scheduled';
+                          final status = (a['status'] ?? AppointmentStatus.scheduled) as String;
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                             child: Row(children: [
                               Expanded(flex: 2, child: Text(a['appt_time'] ?? '—', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                               Expanded(flex: 3, child: Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
                               Expanded(flex: 2, child: Text(a['visit_type'] ?? '—', style: const TextStyle(fontSize: 11, color: cMuted))),
-                              Expanded(flex: 2, child: _statusPill(status.toLowerCase())),
+                              Expanded(flex: 2, child: _statusPill(status)),
                               Expanded(flex: 2, child: Row(children: [
-                                if (status == 'Arrived' || status == 'Waiting') _smallBtn('Start', cPrimary.withOpacity(0.1), cPrimary, () { _updateStatus(a['appt_id'], 'In Consultation'); setState(() { _activeConsultAppt = a; _tab = 'consultations'; }); }),
-                                if (status == 'In Consultation') _smallBtn('Resume', cBlue50, cBlue700, () => setState(() { _activeConsultAppt = a; _tab = 'consultations'; })),
-                                if (status == 'In Consultation') ...[const SizedBox(width: 4), _smallBtn('Complete', cEm50, cEm700, () => _updateStatus(a['appt_id'], 'Completed'))],
+                                if (status == AppointmentStatus.arrived) _smallBtn('Start', cPrimary.withOpacity(0.1), cPrimary, () { _updateStatus(a['appt_id'], AppointmentStatus.inConsultation); setState(() { _activeConsultAppt = a; _tab = 'consultations'; }); }),
+                                if (status == AppointmentStatus.inConsultation) _smallBtn('Resume', cBlue50, cBlue700, () => setState(() { _activeConsultAppt = a; _tab = 'consultations'; })),
+                                if (status == AppointmentStatus.inConsultation) ...[const SizedBox(width: 4), _smallBtn('Complete', cEm50, cEm700, () => _updateStatus(a['appt_id'], AppointmentStatus.completed))],
                               ])),
                             ]),
                           );
@@ -738,26 +887,35 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   // ─── TAB 4: CONSULTATION ─────────────────────────────
   Widget _buildConsultationTab() {
-    final sections = [
-      {'label': 'Chief complaints', 'value': 'Recurrent migraine, throbbing left temporal region. Onset: 4 years. Aggravated by sun exposure, mental exertion.'},
-      {'label': 'Modalities', 'value': 'Worse: heat, light, noise. Better: dark room, cold application, sleep.'},
-      {'label': 'Mental symptoms', 'value': 'Anxious, irritable during episodes. Wants to be alone. Aversion to consolation.'},
-      {'label': 'Physical generals', 'value': 'Thermal: hot patient. Thirst: large quantity, infrequent. Perspiration: scanty. Sleep: disturbed during episodes.'},
-      {'label': 'Cravings / aversions', 'value': 'Cravings: salty, cold drinks. Aversions: sweets.'},
-      {'label': 'Past history', 'value': 'Tonsillectomy (2008). Recurrent UTI 2018-19.'},
-      {'label': 'Family history', 'value': 'Mother — migraine. Father — hypertension.'},
-    ];
-
-    final previous = [
-      {'date': '28 Apr 2026', 'remedy': 'Belladonna 200, OD × 7d', 'note': 'Frequency reduced from 5 → 2 episodes/week', 'visit': '#4'},
-      {'date': '14 Apr 2026', 'remedy': 'Bryonia 30, BD × 5d', 'note': 'Initial — partial relief', 'visit': '#3'},
-    ];
-
     final appt = _activeConsultAppt;
-    final patientName = appt?['patient']?['full_name'] ?? 'Anita Sharma';
-    final token = appt != null ? 'T-${appt['token_number'] ?? '--'}' : 'T-12';
-    final visitType = appt?['visit_type'] ?? 'Follow Up';
-    final apptTime = appt?['appt_time'] ?? '10:04';
+
+    // No active consultation: honest empty state instead of demo data.
+    if (appt == null) {
+      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.medical_services_outlined, size: 40, color: cMuted),
+        const SizedBox(height: 12),
+        const Text('No consultation in progress', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cFg)),
+        const SizedBox(height: 6),
+        Text('Start an ${AppointmentStatus.arrived} appointment from the Appointments tab.', style: const TextStyle(fontSize: 12, color: cMuted), textAlign: TextAlign.center),
+      ]));
+    }
+
+    // Case-taking fields are filled in by the doctor during the visit.
+    final sections = [
+      {'label': 'Chief complaints', 'value': 'To be recorded during consultation'},
+      {'label': 'Modalities', 'value': 'To be recorded during consultation'},
+      {'label': 'Mental symptoms', 'value': 'To be recorded during consultation'},
+      {'label': 'Physical generals', 'value': 'To be recorded during consultation'},
+      {'label': 'Cravings / aversions', 'value': 'To be recorded during consultation'},
+      {'label': 'Past history', 'value': 'To be recorded during consultation'},
+      {'label': 'Family history', 'value': 'To be recorded during consultation'},
+    ];
+
+    final patientName = appt['patient']?['full_name'] ?? 'Walk-In';
+    final token = 'T-${appt['token_number'] ?? '--'}';
+    final visitType = (appt['visit_type'] ?? VisitType.newVisit) as String;
+    final apptTime = appt['appt_time'] ?? '—';
+    final apptDate = appt['appt_date'] ?? _date;
 
     return Column(
       children: [
@@ -770,27 +928,15 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
               Row(children: [
                 Text(patientName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cFg)),
                 const SizedBox(width: 8),
-                _statusPill('in consultation'),
-                const SizedBox(width: 8),
-                Text('VHC-00821 · 42F · Visit #5', style: const TextStyle(fontSize: 11, color: cMuted)),
+                _statusPill(AppointmentStatus.inConsultation),
               ]),
               Row(children: [
-                Text('Token $token · Started $apptTime · $visitType', style: const TextStyle(fontSize: 11, color: cMuted)),
+                Text('Token $token · $apptDate · Started $apptTime · $visitType', style: const TextStyle(fontSize: 11, color: cMuted)),
               ]),
             ])),
-            Row(children: [
-              _outlineBtn('Distraction-free', Icons.fullscreen_rounded, () {}),
-              const SizedBox(width: 6),
-              _outlineBtn('Handwritten', Icons.edit_outlined, () {}),
-              const SizedBox(width: 6),
-              _outlineBtn('Save draft', Icons.save_outlined, () {}),
-              const SizedBox(width: 6),
-              _primaryBtn('Finalize & Prescribe', Icons.description_outlined, () {
-                if (appt != null) {
-                  Navigator.pushNamed(context, '/prescription', arguments: appt);
-                }
-              }),
-            ]),
+            _primaryBtn('Finalize & Prescribe', Icons.description_outlined, () {
+              Navigator.pushNamed(context, '/prescription', arguments: appt);
+            }),
           ]),
         ),
 
@@ -807,8 +953,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: cBorder))),
                     child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                      const Text('Case Taking · Visit on 14 May 2026', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
-                      const Text('Template: Migraine — Chronic', style: TextStyle(fontSize: 11, color: cMuted)),
+                      Text('Case Taking · Visit on $apptDate', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
                     ]),
                   ),
                   ...sections.map((s) => Container(
@@ -833,7 +978,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(color: cMutedBg.withOpacity(0.5), borderRadius: BorderRadius.circular(8), border: Border.all(color: cBorder)),
-                        child: const Text('Continue Belladonna 200; review in 14 days. Advise sleep hygiene + hydration log.', style: TextStyle(fontSize: 12, color: cFg, height: 1.5)),
+                        child: Text((appt['notes'] ?? 'No appointment notes.') as String, style: const TextStyle(fontSize: 12, color: cFg, height: 1.5)),
                       ),
                     ]),
                   ),
@@ -851,50 +996,30 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                       decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: cBorder))),
-                      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                        const Row(children: [
-                          Icon(Icons.history_rounded, size: 16, color: cMuted),
-                          SizedBox(width: 6),
-                          Text('Previous visits', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
-                        ]),
-                        TextButton(onPressed: () {}, child: const Text('Compare', style: TextStyle(fontSize: 11, color: cPrimary))),
+                      child: const Row(children: [
+                        Icon(Icons.history_rounded, size: 16, color: cMuted),
+                        SizedBox(width: 6),
+                        Text('Previous visits', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
                       ]),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(children: previous.map((p) => Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(border: Border.all(color: cBorder), borderRadius: BorderRadius.circular(8)),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                            Text(p['date']!, style: const TextStyle(fontSize: 10, color: cMuted)),
-                            Text('Visit ${p['visit']}', style: const TextStyle(fontSize: 10, color: cMuted)),
-                          ]),
-                          const SizedBox(height: 4),
-                          Text(p['remedy']!, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cFg)),
-                          Text(p['note']!, style: const TextStyle(fontSize: 10, color: cMuted)),
-                        ]),
-                      )).toList()),
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Center(child: Text('Prescription history is available in the patient record.', style: TextStyle(fontSize: 11, color: cMuted), textAlign: TextAlign.center)),
                     ),
                   ]),
                 ),
 
-                // Quick remedies
+                // Quick remedies (reference labels)
                 Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
                   padding: const EdgeInsets.all(14),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('Quick remedies', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
+                    const Text('Common remedies', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
                     const SizedBox(height: 10),
                     Wrap(
                       spacing: 6, runSpacing: 6,
-                      children: ['Belladonna 200', 'Bryonia 30', 'Nat. Mur 200', 'Pulsatilla 30', 'Sepia 200', 'Ignatia 1M'].map((r) => InkWell(
-                        onTap: () {},
-                        borderRadius: BorderRadius.circular(6),
-                        child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: cMutedBg, borderRadius: BorderRadius.circular(6)), child: Text(r, style: const TextStyle(fontSize: 10, color: cFg))),
-                      )).toList(),
+                      children: ['Belladonna 200', 'Bryonia 30', 'Nat. Mur 200', 'Pulsatilla 30', 'Sepia 200', 'Ignatia 1M'].map((r) => Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: cMutedBg, borderRadius: BorderRadius.circular(6)), child: Text(r, style: const TextStyle(fontSize: 10, color: cFg)))).toList(),
                     ),
                   ]),
                 ),

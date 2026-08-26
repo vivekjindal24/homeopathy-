@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
 
+/// Entry point for the named route '/prescription' (see main.dart).
+Widget buildPrescriptionScreen(Map<String, dynamic> appointmentArgs) =>
+    PrescriptionScreen(appointment: appointmentArgs);
+
 class PrescriptionScreen extends StatefulWidget {
   final Map<String, dynamic> appointment;
   const PrescriptionScreen({super.key, required this.appointment});
@@ -36,6 +40,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
     final patientId = widget.appointment['patient_id'];
     final date = widget.appointment['appt_date'];
     final eligible = await _apiService.check7dayWaiver(patientId, date);
+    if (!mounted) return;
     setState(() {
       _isWaiverEligible = eligible;
       _applyWaiver = eligible; // Automatically opt-in if eligible
@@ -75,37 +80,36 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
     }
 
     setState(() => _isLoading = true);
-    
-    // Create prescription in backend
-    final result = await _apiService.createPrescription({
-      'appt_id': widget.appointment['appt_id'],
-      'patient_id': widget.appointment['patient_id'],
-      'chief_complaint': _complaintController.text.trim(),
-      'diagnosis': _diagnosisController.text.trim(),
-      'medicines': _medicines,
-      'instructions': _instructionsController.text.isNotEmpty ? _instructionsController.text.trim() : null,
-      'follow_up_date': _followUpController.text.isNotEmpty ? _followUpController.text : null,
-      'is_fee_waived': _applyWaiver,
-    });
 
-    if (result != null) {
-      // Also automatically trigger creation of invoice in draft state (standard receptionist workflow handoff)
-      await _apiService.createInvoice({
-        'patient_id': widget.appointment['patient_id'],
+    try {
+      // Invoice/billing is the receptionist's job after the visit (PRD §5.4.5);
+      // saving a prescription only records clinical data + fee-waiver flag.
+      await _apiService.createPrescription({
         'appt_id': widget.appointment['appt_id'],
-        'consultation_fee': _applyWaiver ? 0.0 : 500.0,
-        'medicine_charges': 150.0, // Placeholder default medicine charge
-        'misc_charges': 0.0,
-        'discount': 0.0,
+        'patient_id': widget.appointment['patient_id'],
+        'chief_complaint': _complaintController.text.trim(),
+        'diagnosis': _diagnosisController.text.trim(),
+        'medicines': _medicines,
+        'instructions': _instructionsController.text.isNotEmpty ? _instructionsController.text.trim() : null,
+        'follow_up_date': _followUpController.text.isNotEmpty ? _followUpController.text : null,
+        'is_fee_waived': _applyWaiver,
       });
 
+      if (!mounted) return;
       setState(() => _isLoading = false);
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Prescription finalized and consultation marked Completed.')),
       );
       Navigator.pop(context); // Go back to schedule
-    } else {
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to finalize prescription: ${e.message}')),
+      );
+    } catch (_) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to finalize prescription. Please try again.')),

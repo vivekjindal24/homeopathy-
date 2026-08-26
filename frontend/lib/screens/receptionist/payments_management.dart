@@ -1,5 +1,13 @@
 import 'package:flutter/material.dart';
+import '../../core/constants.dart';
 import '../../services/api_service.dart';
+
+double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
+
+DateTime? _parseDate(dynamic v) {
+  if (v == null || '${v}'.isEmpty) return null;
+  return DateTime.tryParse('$v');
+}
 
 class PaymentsManagement extends StatefulWidget {
   final String? clinicId;
@@ -11,9 +19,9 @@ class PaymentsManagement extends StatefulWidget {
 
 class _PaymentsManagementState extends State<PaymentsManagement> {
   final ApiService _apiService = ApiService();
-  List<dynamic> _invoices = [];
   List<dynamic> _paymentsList = [];
   bool _isLoading = false;
+  String? _error;
 
   @override
   void initState() {
@@ -30,56 +38,83 @@ class _PaymentsManagementState extends State<PaymentsManagement> {
   }
 
   Future<void> _fetchPaymentsData() async {
-    setState(() => _isLoading = true);
-    final invoices = await _apiService.getInvoices();
-    
-    // Flatten payments from invoices
-    final List<dynamic> localPayments = [];
-    for (var inv in invoices) {
-      final payments = inv['payments'] ?? [];
-      final patientName = inv['patient']?['full_name'] ?? 'Walk-In';
-      
-      for (var pay in payments) {
-        localPayments.add({
-          'payment_id': pay['payment_id'],
-          'invoice_id': inv['invoice_id'],
-          'patient_name': patientName,
-          'amount': pay['amount'],
-          'payment_mode': pay['payment_mode'],
-          'transaction_id': pay['transaction_id'] ?? '—',
-          'paid_at': pay['paid_at'] ?? inv['updated_at'] ?? '—',
-          'status': pay['status'] ?? 'Success',
-        });
-      }
-    }
-
-    // Sort by date (descending)
-    localPayments.sort((a, b) => b['paid_at'].toString().compareTo(a['paid_at'].toString()));
-
     setState(() {
-      _invoices = invoices;
-      _paymentsList = localPayments;
-      _isLoading = false;
+      _isLoading = true;
+      _error = null;
     });
+
+    try {
+      final invoices = await _apiService.getInvoices();
+
+      // Flatten payments from invoices
+      final List<dynamic> localPayments = [];
+      for (var inv in invoices) {
+        final payments = inv['payments'] ?? [];
+        final patientName = inv['patient']?['full_name'] ?? inv['patient_id'] ?? 'Walk-In';
+
+        for (var pay in payments) {
+          localPayments.add({
+            'payment_id': pay['payment_id'],
+            'invoice_id': inv['invoice_id'],
+            'patient_name': patientName,
+            'amount': pay['amount'],
+            'payment_mode': pay['payment_mode'],
+            'transaction_id': pay['transaction_id'] ?? '—',
+            'paid_at': pay['paid_at'],
+            'status': pay['status'] ?? 'Success',
+          });
+        }
+      }
+
+      // Sort by parsed paid_at (descending); entries without a timestamp sink last.
+      localPayments.sort((a, b) {
+        final da = _parseDate(a['paid_at']);
+        final db = _parseDate(b['paid_at']);
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return db.compareTo(da);
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _paymentsList = localPayments;
+        _isLoading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _isLoading = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Financial breakdowns
+    // Financial breakdowns — modes come straight from payment records
     double totalRevenue = 0.0;
     double cashRev = 0.0;
     double upiRev = 0.0;
     double cardRev = 0.0;
+    double onlineRev = 0.0;
 
     for (var p in _paymentsList) {
-      final amt = (p['amount'] as num).toDouble();
+      final amt = _parseAmount(p['amount']);
       totalRevenue += amt;
-      if (p['payment_mode'] == 'Cash') {
-        cashRev += amt;
-      } else if (p['payment_mode'] == 'UPI') {
-        upiRev += amt;
-      } else if (p['payment_mode'] == 'Card') {
-        cardRev += amt;
+      switch (p['payment_mode']) {
+        case PaymentMode.cash:
+          cashRev += amt;
+          break;
+        case PaymentMode.upi:
+          upiRev += amt;
+          break;
+        case PaymentMode.card:
+          cardRev += amt;
+          break;
+        case PaymentMode.online:
+          onlineRev += amt;
+          break;
       }
     }
 
@@ -94,125 +129,146 @@ class _PaymentsManagementState extends State<PaymentsManagement> {
           const SizedBox(width: 16),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(24.0),
+      body: _error != null
+          ? Center(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Summary grid
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildMetricCard("Total Collected", "₹${totalRevenue.toStringAsFixed(0)}", Icons.account_balance_wallet_outlined, const Color(0xFF0F766E), const Color(0xFFECFDF5)),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _buildMetricCard("UPI Payments", "₹${upiRev.toStringAsFixed(0)}", Icons.qr_code_scanner_rounded, Colors.purple[700]!, Colors.purple[50]!),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _buildMetricCard("Cash Collection", "₹${cashRev.toStringAsFixed(0)}", Icons.payments_outlined, Colors.green[700]!, const Color(0xFFECFDF5)),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _buildMetricCard("Card Collections", "₹${cardRev.toStringAsFixed(0)}", Icons.credit_card_rounded, Colors.blue[700]!, Colors.blue[50]!),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  
-                  // Payments Table Card
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Transaction History Log', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A))),
-                          const SizedBox(height: 12),
-                          if (_paymentsList.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.all(32.0),
-                              child: Center(child: Text('No payment transactions recorded yet.', style: TextStyle(fontStyle: FontStyle.italic))),
-                            )
-                          else
-                            Table(
-                              columnWidths: const {
-                                0: FlexColumnWidth(1.2),
-                                1: FlexColumnWidth(1.8),
-                                2: FlexColumnWidth(1.2),
-                                3: FlexColumnWidth(1.0),
-                                4: FlexColumnWidth(1.5),
-                                5: FlexColumnWidth(1.2),
-                              },
-                              children: [
-                                TableRow(
-                                  decoration: const BoxDecoration(
-                                    border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-                                  ),
-                                  children: [
-                                    _buildTableHeader("Receipt ID"),
-                                    _buildTableHeader("Patient Name"),
-                                    _buildTableHeader("Mode"),
-                                    _buildTableHeader("Amount"),
-                                    _buildTableHeader("Transaction ID"),
-                                    _buildTableHeader("Timestamp"),
-                                  ],
-                                ),
-                                ..._paymentsList.map((p) {
-                                  final pId = p['payment_id'].toString().substring(0, 8).toUpperCase();
-                                  final double amt = (p['amount'] as num).toDouble();
-                                  
-                                  // Formatting timestamp
-                                  String timeStr = p['paid_at'].toString().split('.').first;
-                                  if (timeStr.contains('T')) {
-                                    final parts = timeStr.split('T');
-                                    timeStr = "${parts[0]} ${parts[1]}";
-                                  }
-
-                                  return TableRow(
-                                    decoration: const BoxDecoration(
-                                      border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
-                                    ),
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                        child: Text('RCP-$pId', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                        child: Text(p['patient_name'], style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                        child: _buildModePill(p['payment_mode']),
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                        child: Text('₹${amt.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green)),
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                        child: Text(p['transaction_id'], style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                        child: Text(timeStr, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                                      ),
-                                    ],
-                                  );
-                                }).toList(),
-                              ],
-                            ),
-                        ],
-                      ),
-                    ),
+                  const Icon(Icons.cloud_off_rounded, size: 40, color: Color(0xFF94A3B8)),
+                  const SizedBox(height: 12),
+                  Text('Failed to load payments\n$_error',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFF64748B))),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: _fetchPaymentsData,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Retry'),
                   ),
                 ],
               ),
-            ),
+            )
+          : _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Summary grid
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildMetricCard("Total Collected", "₹${totalRevenue.toStringAsFixed(0)}", Icons.account_balance_wallet_outlined, const Color(0xFF0F766E), const Color(0xFFECFDF5)),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: _buildMetricCard("UPI Payments", "₹${upiRev.toStringAsFixed(0)}", Icons.qr_code_scanner_rounded, Colors.purple[700]!, Colors.purple[50]!),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: _buildMetricCard("Cash Collection", "₹${cashRev.toStringAsFixed(0)}", Icons.payments_outlined, Colors.green[700]!, const Color(0xFFECFDF5)),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: _buildMetricCard("Card / Online", "₹${(cardRev + onlineRev).toStringAsFixed(0)}", Icons.credit_card_rounded, Colors.blue[700]!, Colors.blue[50]!),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Payments Table Card
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Transaction History Log', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A))),
+                              const SizedBox(height: 12),
+                              if (_paymentsList.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.all(32.0),
+                                  child: Center(child: Text('No payment transactions recorded yet.', style: TextStyle(fontStyle: FontStyle.italic))),
+                                )
+                              else
+                                Table(
+                                  columnWidths: const {
+                                    0: FlexColumnWidth(1.2),
+                                    1: FlexColumnWidth(1.8),
+                                    2: FlexColumnWidth(1.2),
+                                    3: FlexColumnWidth(1.0),
+                                    4: FlexColumnWidth(1.5),
+                                    5: FlexColumnWidth(1.2),
+                                  },
+                                  children: [
+                                    TableRow(
+                                      decoration: const BoxDecoration(
+                                        border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+                                      ),
+                                      children: [
+                                        _buildTableHeader("Receipt ID"),
+                                        _buildTableHeader("Patient Name"),
+                                        _buildTableHeader("Mode"),
+                                        _buildTableHeader("Amount"),
+                                        _buildTableHeader("Transaction ID"),
+                                        _buildTableHeader("Timestamp"),
+                                      ],
+                                    ),
+                                    ..._paymentsList.map((p) {
+                                      final pIdStr = '${p['payment_id'] ?? ''}';
+                                      final pId = pIdStr.length > 8
+                                          ? pIdStr.substring(0, 8).toUpperCase()
+                                          : pIdStr.toUpperCase();
+                                      final double amt = _parseAmount(p['amount']);
+
+                                      // Formatting timestamp safely
+                                      final dt = _parseDate(p['paid_at']);
+                                      String timeStr = dt != null
+                                          ? "${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}"
+                                          : '—';
+
+                                      return TableRow(
+                                        decoration: const BoxDecoration(
+                                          border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                                        ),
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                            child: Text('RCP-$pId', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                            child: Text('${p['patient_name']}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                            child: _buildModePill('${p['payment_mode'] ?? '—'}'),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                            child: Text('₹${amt.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green)),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                            child: Text('${p['transaction_id']}', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                            child: Text(timeStr, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                                          ),
+                                        ],
+                                      );
+                                    }).toList(),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
     );
   }
 
@@ -259,15 +315,23 @@ class _PaymentsManagementState extends State<PaymentsManagement> {
     Color bg = const Color(0xFFF1F5F9);
     Color fg = const Color(0xFF475569);
 
-    if (mode == 'UPI') {
-      bg = Colors.purple[50]!;
-      fg = Colors.purple[700]!;
-    } else if (mode == 'Cash') {
-      bg = const Color(0xFFECFDF5);
-      fg = const Color(0xFF047857);
-    } else if (mode == 'Card') {
-      bg = Colors.blue[50]!;
-      fg = Colors.blue[700]!;
+    switch (mode) {
+      case PaymentMode.upi:
+        bg = Colors.purple[50]!;
+        fg = Colors.purple[700]!;
+        break;
+      case PaymentMode.cash:
+        bg = const Color(0xFFECFDF5);
+        fg = const Color(0xFF047857);
+        break;
+      case PaymentMode.card:
+        bg = Colors.blue[50]!;
+        fg = Colors.blue[700]!;
+        break;
+      case PaymentMode.online:
+        bg = Colors.teal[50]!;
+        fg = Colors.teal[700]!;
+        break;
     }
 
     return UnconstrainedBox(

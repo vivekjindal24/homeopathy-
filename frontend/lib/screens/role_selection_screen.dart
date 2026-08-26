@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
 
 class RoleSelectionScreen extends StatefulWidget {
-  const RoleSelectionScreen({super.key});
+  final String? returnTo;
+  final String? requiredRole;
+  const RoleSelectionScreen({super.key, this.returnTo, this.requiredRole});
 
   @override
   State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
@@ -13,13 +15,20 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
 
-  void _showLoginDialog(String role) {
-    _emailCtrl.text = role == 'doctor'
-        ? 'doctor@vermahomeopathy.com'
-        : 'receptionist@vermahomeopathy.com';
-    _passCtrl.text = role == 'doctor' ? 'doctor123' : 'frontdesk123';
+  String? _roleRouteFor(String? role) {
+    switch (role) {
+      case 'Receptionist':
+        return '/receptionist';
+      case 'Doctor':
+        return '/doctor';
+      case 'SuperAdmin':
+        return '/admin';
+      default:
+        return null;
+    }
+  }
 
-    // Dialog manages its own loading/error state via setS so the UI updates correctly
+  void _showLoginDialog(String role) {
     bool dialogLoading = false;
     String? dialogError;
 
@@ -27,29 +36,47 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       context: context,
       barrierDismissible: !dialogLoading,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
-
         Future<void> doLogin() async {
           if (_emailCtrl.text.isEmpty || _passCtrl.text.isEmpty) {
             setS(() => dialogError = 'Please enter email and password.');
             return;
           }
-          setS(() { dialogLoading = true; dialogError = null; });
+          setS(() {
+            dialogLoading = true;
+            dialogError = null;
+          });
           try {
             final success = await _api.login(_emailCtrl.text.trim(), _passCtrl.text);
-            if (!mounted) return;
             if (!success) {
-              setS(() { dialogError = 'Invalid credentials. Please check your email and password.'; dialogLoading = false; });
+              setS(() {
+                dialogError = 'Invalid email or password.';
+                dialogLoading = false;
+              });
               return;
             }
-            Navigator.pop(ctx);
             final userRole = _api.role ?? '';
-            if (userRole == 'Receptionist') {
-              Navigator.pushReplacementNamed(context, '/receptionist');
-            } else {
-              Navigator.pushReplacementNamed(context, '/doctor');
+            // Enforce the portal the user chose (NFR-6): no cross-role entry.
+            if (widget.requiredRole != null &&
+                widget.requiredRole != userRole &&
+                userRole != 'SuperAdmin') {
+              setS(() {
+                dialogError =
+                    'This account does not have access to the ${widget.requiredRole} portal.';
+                dialogLoading = false;
+              });
+              await _api.clearSession();
+              return;
             }
+            if (!mounted) return;
+            Navigator.pop(ctx);
+            final target =
+                widget.returnTo ?? _roleRouteFor(userRole) ?? '/';
+            Navigator.pushReplacementNamed(context, target);
           } catch (e) {
-            setS(() { dialogError = e.toString().replaceAll('Exception: ', ''); dialogLoading = false; });
+            setS(() {
+              dialogError = e.toString().replaceAll('Exception: ', '');
+              dialogLoading = false;
+            });
           }
         }
 
@@ -66,7 +93,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 Row(
                   children: [
                     Container(
-                      width: 36, height: 36,
+                      width: 36,
+                      height: 36,
                       decoration: BoxDecoration(
                         color: role == 'doctor' ? const Color(0xFF0F766E) : const Color(0xFF3B82F6),
                         borderRadius: BorderRadius.circular(8),
@@ -80,7 +108,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                           role == 'doctor' ? 'Doctor / Admin Login' : 'Receptionist Login',
                           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
                         ),
-                        const Text('Enter your credentials to continue', style: TextStyle(fontSize: 11, color: Color(0xFF717182))),
+                        const Text('Enter your credentials to continue',
+                            style: TextStyle(fontSize: 11, color: Color(0xFF717182))),
                       ]),
                     ),
                     IconButton(
@@ -90,11 +119,13 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 24),
-                const Text('Email', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF0F172A))),
+                const Text('Email',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF0F172A))),
                 const SizedBox(height: 6),
                 TextField(
                   controller: _emailCtrl,
                   enabled: !dialogLoading,
+                  autofocus: true,
                   style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
                   decoration: InputDecoration(
                     hintText: 'Enter email address',
@@ -103,11 +134,13 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0x1A000000))),
                     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0x1A000000))),
                     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: role == 'doctor' ? const Color(0xFF0F766E) : const Color(0xFF3B82F6), width: 1.5)),
-                    filled: true, fillColor: Colors.white,
+                    filled: true,
+                    fillColor: Colors.white,
                   ),
                 ),
                 const SizedBox(height: 14),
-                const Text('Password', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF0F172A))),
+                const Text('Password',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF0F172A))),
                 const SizedBox(height: 6),
                 TextField(
                   controller: _passCtrl,
@@ -122,7 +155,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0x1A000000))),
                     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0x1A000000))),
                     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: role == 'doctor' ? const Color(0xFF0F766E) : const Color(0xFF3B82F6), width: 1.5)),
-                    filled: true, fillColor: Colors.white,
+                    filled: true,
+                    fillColor: Colors.white,
                   ),
                 ),
                 if (dialogError != null) ...[
@@ -159,6 +193,22 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _maybeResumeSession();
+  }
+
+  Future<void> _maybeResumeSession() async {
+    if (widget.returnTo != null) return; // came here because guard rejected
+    final ok = await _api.restoreSession();
+    if (!ok || !mounted) return;
+    final route = _roleRouteFor(_api.role);
+    if (route != null && route != '/') {
+      Navigator.pushReplacementNamed(context, route);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
@@ -183,11 +233,11 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const SizedBox(height: 60),
-                // Brand
                 Column(
                   children: [
                     Container(
-                      width: 64, height: 64,
+                      width: 64,
+                      height: 64,
                       decoration: BoxDecoration(
                         color: const Color(0xFF0F766E),
                         borderRadius: BorderRadius.circular(16),
@@ -202,15 +252,13 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 48),
-
-                // Role cards
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 700),
+                  constraints: const BoxConstraints(maxWidth: 960),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Row(
-                      children: [
-                        Expanded(child: _buildRoleCard(
+                    child: LayoutBuilder(builder: (context, constraints) {
+                      final cards = <Widget>[
+                        _buildRoleCard(
                           role: 'doctor',
                           title: 'Doctor / Admin',
                           description: 'Full clinical access — consultations, prescriptions, analytics, billing management, and system administration.',
@@ -219,24 +267,77 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                           accentColor: const Color(0xFF0F766E),
                           accentBg: const Color(0xFFE6FFF8),
                           icon: Icons.medical_information_outlined,
-                        )),
-                        const SizedBox(width: 24),
-                        Expanded(child: _buildRoleCard(
+                        ),
+                        _buildRoleCard(
                           role: 'receptionist',
                           title: 'Receptionist',
-                          description: 'Front-desk operations — patient registration, appointments, queue management, billing, and inventory.',
-                          tags: ['Queue', 'Appointments', 'Billing', 'Inventory'],
+                          description: 'Front-desk operations — patient registration, appointments, queue management, billing, and reports.',
+                          tags: ['Queue', 'Appointments', 'Billing', 'Reports'],
                           cta: 'Open Receptionist Portal',
                           accentColor: const Color(0xFF3B82F6),
                           accentBg: const Color(0xFFEFF6FF),
                           icon: Icons.person_outline_rounded,
-                        )),
-                      ],
-                    ),
+                        ),
+                      ];
+                      final portalCard = InkWell(
+                        onTap: () => Navigator.pushNamed(context, '/portal'),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: const Color(0x1A000000)),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF5F3FF),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(Icons.smartphone_outlined, color: Color(0xFF7C3AED), size: 24),
+                              ),
+                              const SizedBox(width: 16),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Patient Portal',
+                                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
+                                    SizedBox(height: 4),
+                                    Text('Book appointments online · view invoices · reschedule or cancel visits',
+                                        style: TextStyle(fontSize: 12, color: Color(0xFF717182))),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.arrow_forward_rounded, size: 18, color: Color(0xFF7C3AED)),
+                            ],
+                          ),
+                        ),
+                      );
+
+                      if (constraints.maxWidth > 720) {
+                        return Column(children: [
+                          Row(children: [
+                            Expanded(child: cards[0]),
+                            const SizedBox(width: 24),
+                            Expanded(child: cards[1]),
+                          ]),
+                          const SizedBox(height: 24),
+                          ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 480),
+                              child: portalCard),
+                        ]);
+                      }
+                      return Column(children: [...cards, const SizedBox(height: 24), portalCard]);
+                    }),
                   ),
                 ),
                 const SizedBox(height: 48),
-                // Footer
                 const Text('HCMS v2.0 · Verma Homeopathy · Indore', style: TextStyle(fontSize: 11, color: Color(0xFF717182))),
                 const SizedBox(height: 40),
               ],
@@ -282,7 +383,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 children: [
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
-                    width: 56, height: 56,
+                    width: 56,
+                    height: 56,
                     decoration: BoxDecoration(
                       color: isHovered ? accentColor : accentBg,
                       borderRadius: BorderRadius.circular(14),
@@ -295,7 +397,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   Text(description, style: const TextStyle(fontSize: 13, color: Color(0xFF717182), height: 1.5)),
                   const SizedBox(height: 20),
                   Wrap(
-                    spacing: 6, runSpacing: 6,
+                    spacing: 6,
+                    runSpacing: 6,
                     children: tags.map((tag) => Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
@@ -308,11 +411,16 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   const SizedBox(height: 24),
                   Row(
                     children: [
-                      Text(cta, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: accentColor)),
+                      Flexible(
+                        child: Text(cta,
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: accentColor),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1),
+                      ),
                       const SizedBox(width: 6),
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
-                        transform: isHovered ? (Matrix4.identity()..translate(4.0)) : Matrix4.identity(),
+                        transform: isHovered ? (Matrix4.identity()..translateByDouble(4.0, 0, 0, 1)) : Matrix4.identity(),
                         child: Icon(Icons.arrow_forward_rounded, size: 16, color: accentColor),
                       ),
                     ],

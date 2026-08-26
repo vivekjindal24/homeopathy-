@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/constants.dart';
 import '../../services/api_service.dart';
 
 class AppointmentsManagement extends StatefulWidget {
@@ -14,6 +15,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
   final ApiService _apiService = ApiService();
   List<dynamic> _appointments = [];
   bool _isLoading = false;
+  String? _error;
   String _viewMode = "table"; // "table" or "calendar"
 
   @override
@@ -32,28 +34,43 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
 
   Future<void> _fetchAppointments() async {
     if (widget.clinicId == null) return;
-    setState(() => _isLoading = true);
-    final results = await _apiService.getAppointments(clinicId: widget.clinicId, date: widget.dateStr);
     setState(() {
-      _appointments = results;
-      _isLoading = false;
+      _isLoading = true;
+      _error = null;
     });
+    try {
+      final results = await _apiService.getAppointments(clinicId: widget.clinicId, date: widget.dateStr);
+      if (!mounted) return;
+      setState(() {
+        _appointments = results;
+        _isLoading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _confirmAppointment(String apptId) async {
     try {
-      await _apiService.updateAppointmentStatus(apptId, 'Waiting');
+      await _apiService.updateAppointmentStatus(apptId, AppointmentStatus.confirmed);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Patient appointment confirmed successfully.')),
       );
       _fetchAppointments();
-    } catch (e) {
-      _showErrorDialog(e.toString());
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _showErrorDialog(e.message);
     }
   }
 
   Future<void> _cancelAppointment(String apptId) async {
-    showDialog(
+    final reasonController = TextEditingController();
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Row(
@@ -63,24 +80,30 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
             Text('Cancel Appointment'),
           ],
         ),
-        content: const Text('Are you sure you want to cancel this appointment? This action cannot be undone.'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('A cancellation reason is required.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Reason *',
+                hintText: 'e.g. Patient requested reschedule',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, false),
             child: const Text('Keep Appointment'),
           ),
           ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              try {
-                await _apiService.updateAppointmentStatus(apptId, 'Cancelled');
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Appointment has been cancelled.')),
-                );
-                _fetchAppointments();
-              } catch (e) {
-                _showErrorDialog(e.toString());
-              }
+            onPressed: () {
+              if (reasonController.text.trim().isEmpty) return;
+              Navigator.pop(context, true);
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Yes, Cancel'),
@@ -88,18 +111,35 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
         ],
       ),
     );
+    if (confirmed != true) return;
+
+    try {
+      await _apiService.updateAppointmentStatus(apptId, AppointmentStatus.cancelled,
+          reason: reasonController.text.trim());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Appointment has been cancelled.')),
+      );
+      _fetchAppointments();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _showErrorDialog(e.message);
+    }
   }
 
   void _openRescheduleDialog(dynamic appt) {
     final formKey = GlobalKey<FormState>();
     final dateController = TextEditingController(text: appt['appt_date']);
     final timeController = TextEditingController(text: appt['appt_time']);
+    final token = appt['token_number'];
 
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text('Reschedule Appointment: T-${appt['appt_time'].replaceAll(':', '')}'),
+          title: Text(token != null
+              ? 'Reschedule Appointment: T-$token'
+              : 'Reschedule Appointment'),
           content: Form(
             key: formKey,
             child: Column(
@@ -127,17 +167,23 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
             ElevatedButton(
               onPressed: () async {
                 if (formKey.currentState!.validate()) {
-                  final result = await _apiService.rescheduleAppointment(
-                    appt['appt_id'],
-                    dateController.text.trim(),
-                    timeController.text.trim(),
-                  );
-                  if (result != null) {
+                  try {
+                    await _apiService.rescheduleAppointment(
+                      appt['appt_id'],
+                      dateController.text.trim(),
+                      timeController.text.trim(),
+                    );
+                    if (!context.mounted) return;
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    ScaffoldMessenger.of(this.context).showSnackBar(
                       SnackBar(content: Text('Appointment rescheduled to ${dateController.text} at ${timeController.text}.')),
                     );
                     _fetchAppointments();
+                  } on ApiException catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+                    );
                   }
                 }
               },
@@ -166,97 +212,125 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
     String? selectedPatientId;
     final dateController = TextEditingController(text: widget.dateStr);
     final timeController = TextEditingController(text: "10:00");
-    String visitType = "New";
-    List<dynamic> _localPatients = [];
-    bool _localLoading = true;
+    String visitType = VisitType.newVisit;
+    List<dynamic> localPatients = [];
+    bool localLoading = true;
+    String? loadError;
 
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            if (_localPatients.isEmpty && _localLoading) {
-              _apiService.getPatients().then((res) {
+            Future<void> load() async {
+              setDialogState(() => localLoading = true);
+              try {
+                final res = await _apiService.getPatients();
                 setDialogState(() {
-                  _localPatients = res;
-                  _localLoading = false;
+                  localPatients = res;
+                  localLoading = false;
                 });
-              });
+              } on ApiException catch (e) {
+                setDialogState(() {
+                  loadError = e.message;
+                  localLoading = false;
+                });
+              }
+            }
+
+            if (localPatients.isEmpty && localLoading && loadError == null) {
+              load();
             }
 
             return AlertDialog(
               title: const Text('Book Appointment Slot', style: TextStyle(fontWeight: FontWeight.bold)),
-              content: _localLoading
+              content: localLoading
                   ? const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()))
-                  : Form(
-                      key: formKey,
-                      child: Container(
-                        width: 450,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            DropdownButtonFormField<String>(
-                              value: selectedPatientId,
-                              decoration: const InputDecoration(labelText: 'Select Patient *'),
-                              items: _localPatients.map<DropdownMenuItem<String>>((p) {
-                                return DropdownMenuItem<String>(
-                                  value: p['patient_id'],
-                                  child: Text('${p['full_name']} (${p['mobile']})'),
-                                );
-                              }).toList(),
-                              onChanged: (val) => setDialogState(() => selectedPatientId = val),
-                              validator: (v) => v == null ? 'Please select patient' : null,
-                            ),
+                  : loadError != null
+                      ? SizedBox(
+                          width: 450,
+                          child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            Text('Failed to load patients: $loadError',
+                                style: const TextStyle(color: Colors.red, fontSize: 12)),
                             const SizedBox(height: 12),
-                            TextFormField(
-                              controller: dateController,
-                              decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD) *'),
-                              validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                            ),
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              controller: timeController,
-                              decoration: const InputDecoration(labelText: 'Time (HH:MM) *'),
-                              validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                            ),
-                            const SizedBox(height: 12),
-                            DropdownButtonFormField<String>(
-                              value: visitType,
-                              decoration: const InputDecoration(labelText: 'Visit Type *'),
-                              items: const [
-                                DropdownMenuItem(value: 'New', child: Text('New Consultation')),
-                                DropdownMenuItem(value: 'Follow-Up', child: Text('Follow-Up Visit')),
+                            ElevatedButton(onPressed: load, child: const Text('Retry')),
+                          ]),
+                        )
+                      : Form(
+                          key: formKey,
+                          child: Container(
+                            width: 450,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                DropdownButtonFormField<String>(
+                                  value: selectedPatientId,
+                                  decoration: const InputDecoration(labelText: 'Select Patient *'),
+                                  items: localPatients.map<DropdownMenuItem<String>>((p) {
+                                    return DropdownMenuItem<String>(
+                                      value: p['patient_id'],
+                                      child: Text('${p['full_name']} (${p['mobile'] ?? p['mobile_number'] ?? ''})'),
+                                    );
+                                  }).toList(),
+                                  onChanged: (val) => setDialogState(() => selectedPatientId = val),
+                                  validator: (v) => v == null ? 'Please select patient' : null,
+                                ),
+                                const SizedBox(height: 12),
+                                TextFormField(
+                                  controller: dateController,
+                                  decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD) *'),
+                                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                                ),
+                                const SizedBox(height: 12),
+                                TextFormField(
+                                  controller: timeController,
+                                  decoration: const InputDecoration(labelText: 'Time (HH:MM) *'),
+                                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                                ),
+                                const SizedBox(height: 12),
+                                DropdownButtonFormField<String>(
+                                  value: visitType,
+                                  decoration: const InputDecoration(labelText: 'Visit Type *'),
+                                  items: const [
+                                    DropdownMenuItem(value: VisitType.newVisit, child: Text('New Consultation')),
+                                    DropdownMenuItem(value: VisitType.followUp, child: Text('Follow-Up Visit')),
+                                  ],
+                                  onChanged: (val) => visitType = val ?? VisitType.newVisit,
+                                ),
                               ],
-                              onChanged: (val) => visitType = val ?? 'New',
                             ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: _localLoading
+                  onPressed: localLoading
                       ? null
                       : () async {
                           if (formKey.currentState!.validate() && selectedPatientId != null) {
-                            final result = await _apiService.createAppointment({
-                              'patient_id': selectedPatientId,
-                              'doctor_id': _apiService.userId ?? "doctor-uuid-placeholder",
-                              'clinic_id': widget.clinicId,
-                              'appt_date': dateController.text.trim(),
-                              'appt_time': timeController.text.trim(),
-                              'visit_type': visitType,
-                            });
-                            if (result != null) {
+                            try {
+                              await _apiService.createAppointment({
+                                'patient_id': selectedPatientId,
+                                'doctor_id': _apiService.userId ?? "doctor-uuid-placeholder",
+                                'clinic_id': widget.clinicId,
+                                'appt_date': dateController.text.trim(),
+                                'appt_time': timeController.text.trim(),
+                                'visit_type': visitType,
+                              });
+                              if (!context.mounted) return;
                               Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              ScaffoldMessenger.of(this.context).showSnackBar(
                                 const SnackBar(content: Text('Appointment booked successfully.')),
                               );
                               _fetchAppointments();
+                            } on ApiException catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+                              );
                             }
                           }
                         },
@@ -275,7 +349,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Error'),
-        content: Text(error.replaceAll('Exception: ', '')),
+        content: Text(error),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
         ],
@@ -286,13 +360,13 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
   @override
   Widget build(BuildContext context) {
     final Map<String, Color> apptStatusStyle = {
-      'Waiting': Colors.amber[700]!,
-      'Arrived': Colors.amber[700]!,
-      'Confirmed': Colors.green[700]!,
-      'In Consultation': Colors.purple[700]!,
-      'Completed': Colors.teal[700]!,
-      'Cancelled': Colors.red[700]!,
-      'No-Show': Colors.grey[700]!,
+      AppointmentStatus.scheduled: Colors.amber[700]!,
+      AppointmentStatus.arrived: Colors.amber[700]!,
+      AppointmentStatus.confirmed: Colors.green[700]!,
+      AppointmentStatus.inConsultation: Colors.purple[700]!,
+      AppointmentStatus.completed: Colors.teal[700]!,
+      AppointmentStatus.cancelled: Colors.red[700]!,
+      AppointmentStatus.noShow: Colors.grey[700]!,
     };
 
     return Scaffold(
@@ -334,12 +408,31 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
       ),
       body: widget.clinicId == null
           ? const Center(child: Text('Please select a clinic first.'))
-          : _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: _viewMode == "calendar" ? _buildCalendarView(apptStatusStyle) : _buildTableView(apptStatusStyle),
-                ),
+          : _error != null
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.cloud_off_rounded, size: 40, color: Color(0xFF94A3B8)),
+                      const SizedBox(height: 12),
+                      Text('Failed to load appointments\n$_error',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Color(0xFF64748B))),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: _fetchAppointments,
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                )
+              : _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: _viewMode == "calendar" ? _buildCalendarView(apptStatusStyle) : _buildTableView(apptStatusStyle),
+                    ),
     );
   }
 
@@ -392,8 +485,9 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                 itemBuilder: (context, index) {
                   final a = _appointments[index];
                   final patientName = a['patient']?['full_name'] ?? 'Walk-In';
-                  final tokenStr = "T-${a['appt_time'].replaceAll(':', '')}";
-                  final status = a['status'];
+                  final tokenNum = a['token_number'];
+                  final tokenStr = tokenNum != null ? "T-$tokenNum" : "--";
+                  final status = '${a['status'] ?? ''}';
                   final styleColor = styles[status] ?? const Color(0xFF64748B);
 
                   return Padding(
@@ -412,7 +506,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                               Text(patientName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                               const SizedBox(height: 2),
                               Text(
-                                'Time: ${a['appt_time']}  ·  Type: ${a['visit_type']}  ·  Doc: Dr. Verma',
+                                'Time: ${a['appt_time'] ?? '--:--'}  ·  Type: ${a['visit_type'] ?? '--'}  ·  Doc: Dr. Verma',
                                 style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
                               ),
                             ],
@@ -432,7 +526,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                         const SizedBox(width: 24),
                         Row(
                           children: [
-                            if (status == 'Scheduled' || status == 'Pending')
+                            if (status == AppointmentStatus.scheduled)
                               ElevatedButton(
                                 onPressed: () => _confirmAppointment(a['appt_id']),
                                 style: ElevatedButton.styleFrom(
@@ -441,7 +535,66 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                                 ),
                                 child: const Text('Confirm', style: TextStyle(fontSize: 11)),
                               ),
-                            if (status != 'Cancelled' && status != 'Completed' && status != 'In Consultation') ...[
+                            if (status == AppointmentStatus.confirmed)
+                              ElevatedButton(
+                                onPressed: () async {
+                                  try {
+                                    await _apiService.updateAppointmentStatus(
+                                        a['appt_id'], AppointmentStatus.arrived);
+                                    _fetchAppointments();
+                                  } on ApiException catch (e) {
+                                    if (!mounted) return;
+                                    _showErrorDialog(e.message);
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFD97706),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                ),
+                                child: const Text('Arrive', style: TextStyle(fontSize: 11)),
+                              ),
+                            if (status == AppointmentStatus.arrived ||
+                                status == AppointmentStatus.noShow)
+                              const SizedBox(width: 8),
+                            if (status == AppointmentStatus.arrived)
+                              OutlinedButton(
+                                onPressed: () async {
+                                  try {
+                                    await _apiService.updateAppointmentStatus(
+                                        a['appt_id'], AppointmentStatus.inConsultation);
+                                    _fetchAppointments();
+                                  } on ApiException catch (e) {
+                                    if (!mounted) return;
+                                    _showErrorDialog(e.message);
+                                  }
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                ),
+                                child: const Text('Start', style: TextStyle(fontSize: 11)),
+                              ),
+                            if (status == AppointmentStatus.arrived)
+                              OutlinedButton(
+                                onPressed: () async {
+                                  try {
+                                    await _apiService.updateAppointmentStatus(
+                                        a['appt_id'], AppointmentStatus.noShow);
+                                    _fetchAppointments();
+                                  } on ApiException catch (e) {
+                                    if (!mounted) return;
+                                    _showErrorDialog(e.message);
+                                  }
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.grey[700],
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                ),
+                                child: const Text('No-Show', style: TextStyle(fontSize: 11)),
+                              ),
+                            if (status != AppointmentStatus.cancelled &&
+                                status != AppointmentStatus.completed &&
+                                status != AppointmentStatus.inConsultation &&
+                                status != AppointmentStatus.noShow) ...[
                               const SizedBox(width: 8),
                               OutlinedButton(
                                 onPressed: () => _openRescheduleDialog(a),
@@ -527,7 +680,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                               itemCount: _appointments.length,
                               itemBuilder: (context, idx) {
                                 final a = _appointments[idx];
-                                final status = a['status'];
+                                final status = '${a['status'] ?? ''}';
                                 final styleColor = styles[status] ?? const Color(0xFF64748B);
 
                                 return Container(
@@ -542,7 +695,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        a['appt_time'],
+                                        '${a['appt_time'] ?? '--:--'}',
                                         style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: styleColor),
                                       ),
                                       const SizedBox(height: 2),
@@ -552,7 +705,7 @@ class _AppointmentsManagementState extends State<AppointmentsManagement> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                       Text(
-                                        a['visit_type'],
+                                        '${a['visit_type'] ?? '--'}',
                                         style: const TextStyle(fontSize: 8, color: Color(0xFF64748B)),
                                       ),
                                     ],
@@ -593,6 +746,7 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
   final _searchController = TextEditingController();
   List<dynamic> _foundPatients = [];
   bool _searchLoading = false;
+  String? _searchError;
   Map<String, dynamic>? _selectedPatient;
 
   // New Registration fields
@@ -605,69 +759,95 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
   String _gender = "M";
 
   // Appointment fields
-  String _visitType = "New";
+  String _visitType = VisitType.newVisit;
   String _generatedToken = "";
+  bool _creating = false;
 
-  void _searchPatients(String query) async {
+  Future<void> _searchPatients(String query) async {
     if (query.isEmpty) return;
-    setState(() => _searchLoading = true);
-    final res = await _apiService.getPatients(search: query);
     setState(() {
-      _foundPatients = res;
-      _searchLoading = false;
+      _searchLoading = true;
+      _searchError = null;
     });
+    try {
+      final res = await _apiService.getPatients(search: query);
+      if (!mounted) return;
+      setState(() {
+        _foundPatients = res;
+        _searchLoading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _searchError = e.message;
+        _searchLoading = false;
+      });
+    }
   }
 
-  void _registerPatient() async {
+  Future<void> _registerPatient() async {
     if (_formKey.currentState!.validate()) {
-      final res = await _apiService.createPatient({
-        'full_name': _nameController.text.trim(),
-        'dob': _dobController.text.trim(),
-        'gender': _gender,
-        'mobile': _mobileController.text.trim(),
-        'address': _addressController.text.trim(),
-        'occupation': _occupationController.text.trim(),
-        'blood_group': 'O+',
-      });
-
-      if (res != null) {
+      setState(() {});
+      try {
+        final res = await _apiService.createPatient({
+          'full_name': _nameController.text.trim(),
+          'dob': _dobController.text.trim(),
+          'gender': _gender,
+          'mobile': _mobileController.text.trim(),
+          'address': _addressController.text.trim(),
+          'occupation': _occupationController.text.trim(),
+          'blood_group': 'O+',
+        });
+        if (!mounted) return;
         setState(() {
           _selectedPatient = res;
           _currentStep = 2; // Jump to Create Slot
         });
-      } else {
+      } on ApiException catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to register patient.')),
+          SnackBar(content: Text(e.message), backgroundColor: Colors.red),
         );
       }
     }
   }
 
-  void _createWalkInAppointment() async {
+  Future<void> _createWalkInAppointment() async {
     if (_selectedPatient == null) return;
     final timeStr = "${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}";
     final dateStr = DateTime.now().toIso8601String().split('T')[0];
 
-    final res = await _apiService.createAppointment({
-      'patient_id': _selectedPatient!['patient_id'],
-      'doctor_id': _apiService.userId ?? "doctor-uuid-placeholder",
-      'clinic_id': widget.clinicId,
-      'appt_date': dateStr,
-      'appt_time': timeStr,
-      'visit_type': _visitType,
-    });
+    setState(() => _creating = true);
+    try {
+      final res = await _apiService.createAppointment({
+        'patient_id': _selectedPatient!['patient_id'],
+        'doctor_id': _apiService.userId ?? "doctor-uuid-placeholder",
+        'clinic_id': widget.clinicId,
+        'appt_date': dateStr,
+        'appt_time': timeStr,
+        'visit_type': _visitType,
+      });
 
-    if (res != null) {
-      // Transition immediately to Waiting state
+      // Transition immediately to Waiting state ("Waiting" == Arrived)
       try {
-        await _apiService.updateAppointmentStatus(res['appt_id'], 'Waiting');
-      } catch (_) {}
+        await _apiService.updateAppointmentStatus(res!['appt_id'], QueueColumn.waiting);
+      } on ApiException {
+        // Non-fatal: appointment exists even if the auto-transition fails.
+      }
 
+      if (!mounted) return;
       setState(() {
-        _generatedToken = "T-${timeStr.replaceAll(':', '')}";
+        // Use the server-assigned queue token (PRD §5.4.2)
+        _generatedToken = "T-${res?['token_number'] ?? '--'}";
         _currentStep = 3; // Success Token
       });
       widget.onComplete();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _creating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -729,7 +909,10 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
             const SizedBox(height: 12),
             if (_searchLoading)
               const Center(child: CircularProgressIndicator())
-            else if (_foundPatients.isNotEmpty)
+            else if (_searchError != null) ...[
+              Text('Search failed: $_searchError', style: const TextStyle(color: Colors.red, fontSize: 11)),
+              const SizedBox(height: 8),
+            ] else if (_foundPatients.isNotEmpty)
               Container(
                 constraints: const BoxConstraints(maxHeight: 180),
                 decoration: BoxDecoration(
@@ -744,7 +927,7 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
                     return ListTile(
                       dense: true,
                       title: Text(p['full_name'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('Mobile: ${p['mobile']} · ID: ${p['unique_patient_id']}'),
+                      subtitle: Text('Mobile: ${p['mobile'] ?? p['mobile_number'] ?? ''} · ID: ${p['unique_patient_id']}'),
                       trailing: const Icon(Icons.chevron_right, size: 16),
                       onTap: () {
                         setState(() {
@@ -850,7 +1033,7 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
                   Text(_selectedPatient?['full_name'] ?? 'Patient', style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   Text(
-                    'ID: ${_selectedPatient?['unique_patient_id']}  ·  Phone: ${_selectedPatient?['mobile']}',
+                    'ID: ${_selectedPatient?['unique_patient_id']}  ·  Phone: ${_selectedPatient?['mobile'] ?? _selectedPatient?['mobile_number'] ?? ''}',
                     style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
                   ),
                 ],
@@ -861,25 +1044,27 @@ class _WalkInIntakeModalState extends State<_WalkInIntakeModal> {
               value: _visitType,
               decoration: const InputDecoration(labelText: 'Visit Type *'),
               items: const [
-                DropdownMenuItem(value: 'New', child: Text('New Consultation')),
-                DropdownMenuItem(value: 'Follow-Up', child: Text('Follow-Up Visit')),
+                DropdownMenuItem(value: VisitType.newVisit, child: Text('New Consultation')),
+                DropdownMenuItem(value: VisitType.followUp, child: Text('Follow-Up Visit')),
               ],
-              onChanged: (val) => _visitType = val ?? 'New',
+              onChanged: (val) => _visitType = val ?? VisitType.newVisit,
             ),
             const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => setState(() => _currentStep = 0),
+                    onPressed: _creating ? null : () => setState(() => _currentStep = 0),
                     child: const Text('Cancel'),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _createWalkInAppointment,
-                    child: const Text('Create Visit & Token'),
+                    onPressed: _creating ? null : _createWalkInAppointment,
+                    child: _creating
+                        ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Create Visit & Token'),
                   ),
                 ),
               ],

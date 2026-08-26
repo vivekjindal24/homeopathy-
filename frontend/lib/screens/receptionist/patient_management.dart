@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/constants.dart';
 import '../../services/api_service.dart';
 
 class PatientManagement extends StatefulWidget {
@@ -12,9 +13,10 @@ class PatientManagement extends StatefulWidget {
 class _PatientManagementState extends State<PatientManagement> {
   final ApiService _apiService = ApiService();
   final _searchController = TextEditingController();
-  
+
   List<dynamic> _patients = [];
   bool _isLoading = false;
+  String? _error;
 
   @override
   void initState() {
@@ -23,12 +25,24 @@ class _PatientManagementState extends State<PatientManagement> {
   }
 
   Future<void> _fetchPatients() async {
-    setState(() => _isLoading = true);
-    final results = await _apiService.getPatients(search: _searchController.text.trim());
     setState(() {
-      _patients = results;
-      _isLoading = false;
+      _isLoading = true;
+      _error = null;
     });
+    try {
+      final results = await _apiService.getPatients(search: _searchController.text.trim());
+      if (!mounted) return;
+      setState(() {
+        _patients = results;
+        _isLoading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _isLoading = false;
+      });
+    }
   }
 
   void _openRegistrationDialog() {
@@ -42,153 +56,168 @@ class _PatientManagementState extends State<PatientManagement> {
     final allergiesController = TextEditingController();
     final chronicController = TextEditingController();
     final referralController = TextEditingController();
-    
+
     String gender = "M";
     String bloodGroup = "A+";
+    bool submitting = false;
 
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Register New Patient', style: TextStyle(fontWeight: FontWeight.bold)),
-          content: SingleChildScrollView(
-            child: Form(
-              key: formKey,
-              child: Container(
-                width: 500,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextFormField(
-                      controller: nameController,
-                      decoration: const InputDecoration(labelText: 'Full Name *'),
-                      validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: dobController,
-                            decoration: const InputDecoration(
-                              labelText: 'DOB (YYYY-MM-DD) *',
-                              suffixIcon: Icon(Icons.calendar_today, size: 18),
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Register New Patient', style: TextStyle(fontWeight: FontWeight.bold)),
+            content: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Container(
+                  width: 500,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: nameController,
+                        decoration: const InputDecoration(labelText: 'Full Name *'),
+                        validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: dobController,
+                              decoration: const InputDecoration(
+                                labelText: 'DOB (YYYY-MM-DD) *',
+                                suffixIcon: Icon(Icons.calendar_today, size: 18),
+                              ),
+                              validator: (v) {
+                                if (v == null || v.isEmpty) return 'Required field';
+                                if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v)) return 'Use YYYY-MM-DD';
+                                return null;
+                              },
                             ),
-                            validator: (v) {
-                              if (v == null || v.isEmpty) return 'Required field';
-                              if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v)) return 'Use YYYY-MM-DD';
-                              return null;
-                            },
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: gender,
-                            decoration: const InputDecoration(labelText: 'Gender *'),
-                            items: const [
-                              DropdownMenuItem(value: 'M', child: Text('Male')),
-                              DropdownMenuItem(value: 'F', child: Text('Female')),
-                              DropdownMenuItem(value: 'Other', child: Text('Other')),
-                            ],
-                            onChanged: (val) => gender = val ?? 'M',
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: gender,
+                              decoration: const InputDecoration(labelText: 'Gender *'),
+                              items: const [
+                                DropdownMenuItem(value: 'M', child: Text('Male')),
+                                DropdownMenuItem(value: 'F', child: Text('Female')),
+                                DropdownMenuItem(value: 'Other', child: Text('Other')),
+                              ],
+                              onChanged: (val) => gender = val ?? 'M',
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: mobileController,
-                            decoration: const InputDecoration(labelText: 'Mobile Number *'),
-                            validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: mobileController,
+                              decoration: const InputDecoration(labelText: 'Mobile Number *'),
+                              validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: bloodGroup,
-                            decoration: const InputDecoration(labelText: 'Blood Group'),
-                            items: const ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
-                                .map((bg) => DropdownMenuItem(value: bg, child: Text(bg)))
-                                .toList(),
-                            onChanged: (val) => bloodGroup = val ?? 'A+',
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: bloodGroup,
+                              decoration: const InputDecoration(labelText: 'Blood Group'),
+                              items: const ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
+                                  .map((bg) => DropdownMenuItem(value: bg, child: Text(bg)))
+                                  .toList(),
+                              onChanged: (val) => bloodGroup = val ?? 'A+',
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: addressController,
-                      decoration: const InputDecoration(labelText: 'Address *'),
-                      validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: occupationController,
-                      decoration: const InputDecoration(labelText: 'Occupation *'),
-                      validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: emailController,
-                      decoration: const InputDecoration(labelText: 'Email (Optional)'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: allergiesController,
-                      decoration: const InputDecoration(labelText: 'Known Allergies'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: chronicController,
-                      decoration: const InputDecoration(labelText: 'Chronic Conditions'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: referralController,
-                      decoration: const InputDecoration(labelText: 'Referred By'),
-                    ),
-                  ],
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: addressController,
+                        decoration: const InputDecoration(labelText: 'Address *'),
+                        validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: occupationController,
+                        decoration: const InputDecoration(labelText: 'Occupation *'),
+                        validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: emailController,
+                        decoration: const InputDecoration(labelText: 'Email (Optional)'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: allergiesController,
+                        decoration: const InputDecoration(labelText: 'Known Allergies'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: chronicController,
+                        decoration: const InputDecoration(labelText: 'Chronic Conditions'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: referralController,
+                        decoration: const InputDecoration(labelText: 'Referred By'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
+            actions: [
+              TextButton(
+                onPressed: submitting ? null : () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: submitting
+                    ? null
+                    : () async {
+                        if (formKey.currentState!.validate()) {
+                          setDialogState(() => submitting = true);
+                          try {
+                            await _apiService.createPatient({
+                              'full_name': nameController.text.trim(),
+                              'dob': dobController.text,
+                              'gender': gender,
+                              'mobile': mobileController.text.trim(),
+                              'address': addressController.text.trim(),
+                              'occupation': occupationController.text.trim(),
+                              'email': emailController.text.isNotEmpty ? emailController.text.trim() : null,
+                              'blood_group': bloodGroup,
+                              'allergies': allergiesController.text.isNotEmpty ? allergiesController.text : null,
+                              'chronic_conditions': chronicController.text.isNotEmpty ? chronicController.text : null,
+                              'referred_by': referralController.text.isNotEmpty ? referralController.text : null,
+                            });
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(content: Text('Patient registered successfully.')),
+                            );
+                            _fetchPatients();
+                          } on ApiException catch (e) {
+                            if (!context.mounted) return;
+                            setDialogState(() => submitting = false);
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+                            );
+                          }
+                        }
+                      },
+                child: submitting
+                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Register'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  final result = await _apiService.createPatient({
-                    'full_name': nameController.text.trim(),
-                    'dob': dobController.text,
-                    'gender': gender,
-                    'mobile': mobileController.text.trim(),
-                    'address': addressController.text.trim(),
-                    'occupation': occupationController.text.trim(),
-                    'email': emailController.text.isNotEmpty ? emailController.text.trim() : null,
-                    'blood_group': bloodGroup,
-                    'allergies': allergiesController.text.isNotEmpty ? allergiesController.text : null,
-                    'chronic_conditions': chronicController.text.isNotEmpty ? chronicController.text : null,
-                    'referred_by': referralController.text.isNotEmpty ? referralController.text : null,
-                  });
-                  if (result != null) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Patient registered successfully.')),
-                    );
-                    _fetchPatients();
-                  }
-                }
-              },
-              child: const Text('Register'),
-            ),
-          ],
         );
       },
     );
@@ -205,79 +234,90 @@ class _PatientManagementState extends State<PatientManagement> {
     final formKey = GlobalKey<FormState>();
     final dateController = TextEditingController(text: DateTime.now().toIso8601String().split('T')[0]);
     final timeController = TextEditingController(text: "10:00");
-    
-    String visitType = "New"; // "New", "Follow-Up", "Walk-In"
+
+    String visitType = VisitType.newVisit; // New / Follow-Up / Walk-In
     String doctorId = _apiService.userId ?? ""; // Single doctor, default is active user
+    bool submitting = false;
 
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Book Appointment for ${patient['full_name']}', style: const TextStyle(fontWeight: FontWeight.bold)),
-          content: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: dateController,
-                  decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD) *'),
-                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: timeController,
-                  decoration: const InputDecoration(labelText: 'Time (HH:MM) *'),
-                  validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: visitType,
-                  decoration: const InputDecoration(labelText: 'Visit Type *'),
-                  items: const [
-                    DropdownMenuItem(value: 'New', child: Text('New Consultation')),
-                    DropdownMenuItem(value: 'Follow-Up', child: Text('Follow-Up Visit')),
-                    DropdownMenuItem(value: 'Walk-In', child: Text('Walk-In Conversion')),
-                  ],
-                  onChanged: (val) => visitType = val ?? 'New',
-                ),
-              ],
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text('Book Appointment for ${patient['full_name']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            content: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: dateController,
+                    decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD) *'),
+                    validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: timeController,
+                    decoration: const InputDecoration(labelText: 'Time (HH:MM) *'),
+                    validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: visitType,
+                    decoration: const InputDecoration(labelText: 'Visit Type *'),
+                    items: const [
+                      DropdownMenuItem(value: VisitType.newVisit, child: Text('New Consultation')),
+                      DropdownMenuItem(value: VisitType.followUp, child: Text('Follow-Up Visit')),
+                      DropdownMenuItem(value: VisitType.walkIn, child: Text('Walk-In Conversion')),
+                    ],
+                    onChanged: (val) => visitType = val ?? VisitType.newVisit,
+                  ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: submitting ? null : () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: submitting
+                    ? null
+                    : () async {
+                        if (formKey.currentState!.validate()) {
+                          if (doctorId.isEmpty) {
+                            doctorId = "doctor-uuid-placeholder";
+                          }
+                          setDialogState(() => submitting = true);
+                          try {
+                            await _apiService.createAppointment({
+                              'patient_id': patient['patient_id'],
+                              'doctor_id': doctorId,
+                              'clinic_id': widget.clinicId,
+                              'appt_date': dateController.text,
+                              'appt_time': timeController.text,
+                              'visit_type': visitType,
+                            });
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(content: Text('Appointment booked successfully.')),
+                            );
+                          } on ApiException catch (e) {
+                            if (!context.mounted) return;
+                            setDialogState(() => submitting = false);
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+                            );
+                          }
+                        }
+                      },
+                child: submitting
+                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Book Slot'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  // If doctorId is empty, fetch doctors or set a mock one
-                  if (doctorId.isEmpty) {
-                    // Try to use the first doctor in system or placeholder
-                    doctorId = "doctor-uuid-placeholder";
-                  }
-                  
-                  final result = await _apiService.createAppointment({
-                    'patient_id': patient['patient_id'],
-                    'doctor_id': doctorId,
-                    'clinic_id': widget.clinicId,
-                    'appt_date': dateController.text,
-                    'appt_time': timeController.text,
-                    'visit_type': visitType,
-                  });
-                  
-                  if (result != null) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Appointment booked successfully.')),
-                    );
-                  }
-                }
-              },
-              child: const Text('Book Slot'),
-            ),
-          ],
         );
       },
     );
@@ -322,37 +362,51 @@ class _PatientManagementState extends State<PatientManagement> {
               ],
             ),
             const SizedBox(height: 24),
-            
+
             // Patient list
             Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _patients.isEmpty
-                      ? const Center(child: Text('No patients found.'))
-                      : Card(
-                          child: ListView.separated(
-                            itemCount: _patients.length,
-                            separatorBuilder: (context, index) => const Divider(color: Color(0xFFE2E8F0)),
-                            itemBuilder: (context, index) {
-                              final p = _patients[index];
-                              return ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: const Color(0xFFE0F2FE),
-                                  foregroundColor: const Color(0xFF0369A1),
-                                  child: const Icon(Icons.person_outline),
-                                ),
-                                title: Text(
-                                  p['full_name'],
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                ),
-                                subtitle: Text(
-                                  'ID: ${p['unique_patient_id']}  ·  Phone: ${p['mobile']}  ·  DOB: ${p['dob']}',
-                                  style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    OutlinedButton.icon(
+              child: _error != null
+                  ? Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.cloud_off_rounded, size: 40, color: Color(0xFF94A3B8)),
+                        const SizedBox(height: 12),
+                        Text('Failed to load patients\n$_error',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Color(0xFF64748B))),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: _fetchPatients,
+                          icon: const Icon(Icons.refresh, size: 16),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    )
+                  : _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _patients.isEmpty
+                          ? const Center(child: Text('No patients found.'))
+                          : Card(
+                              child: ListView.separated(
+                                itemCount: _patients.length,
+                                separatorBuilder: (context, index) => const Divider(color: Color(0xFFE2E8F0)),
+                                itemBuilder: (context, index) {
+                                  final p = _patients[index];
+                                  return ListTile(
+                                    leading: CircleAvatar(
+                                      backgroundColor: const Color(0xFFE0F2FE),
+                                      foregroundColor: const Color(0xFF0369A1),
+                                      child: const Icon(Icons.person_outline),
+                                    ),
+                                    title: Text(
+                                      '${p['full_name'] ?? '—'}',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                    ),
+                                    subtitle: Text(
+                                      'ID: ${p['unique_patient_id'] ?? '—'}  ·  Phone: ${p['mobile'] ?? p['mobile_number'] ?? '—'}  ·  DOB: ${p['dob'] ?? '—'}',
+                                      style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                    ),
+                                    trailing: OutlinedButton.icon(
                                       onPressed: () => _openBookingDialog(p),
                                       icon: const Icon(Icons.calendar_today, size: 14),
                                       label: const Text('Book Appointment', style: TextStyle(fontSize: 12)),
@@ -360,12 +414,10 @@ class _PatientManagementState extends State<PatientManagement> {
                                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                       ),
                                     ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
+                                  );
+                                },
+                              ),
+                            ),
             ),
           ],
         ),

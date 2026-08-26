@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import '../../core/constants.dart';
 import '../../services/api_service.dart';
+import 'queue_management.dart' show showRecordPaymentDialog;
+
+double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
 
 class BillingInvoice extends StatefulWidget {
   final String? clinicId;
@@ -14,40 +18,50 @@ class _BillingInvoiceState extends State<BillingInvoice> {
   List<dynamic> _invoices = [];
   List<dynamic> _patients = [];
   bool _isLoading = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _fetchInvoices();
-    _fetchPatients();
+    _fetchData();
   }
 
-  Future<void> _fetchInvoices() async {
-    setState(() => _isLoading = true);
-    final results = await _apiService.getInvoices();
+  Future<void> _fetchData() async {
     setState(() {
-      _invoices = results;
-      _isLoading = false;
+      _isLoading = true;
+      _error = null;
     });
-  }
-
-  Future<void> _fetchPatients() async {
-    final results = await _apiService.getPatients();
-    setState(() {
-      _patients = results;
-    });
+    try {
+      final results = await Future.wait([
+        _apiService.getInvoices(),
+        _apiService.getPatients(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _invoices = results[0];
+        _patients = results[1];
+        _isLoading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _isLoading = false;
+      });
+    }
   }
 
   void _openCreateInvoiceDialog() {
     final formKey = GlobalKey<FormState>();
     String? selectedPatientId;
-    
+
     final consultationController = TextEditingController(text: "500.0");
     final medicineController = TextEditingController(text: "0.0");
     final miscController = TextEditingController(text: "0.0");
     final discountController = TextEditingController(text: "0.0");
 
     double totalAmount = 500.0;
+    bool submitting = false;
 
     showDialog(
       context: context,
@@ -59,7 +73,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
               final med = double.tryParse(medicineController.text) ?? 0.0;
               final misc = double.tryParse(miscController.text) ?? 0.0;
               final disc = double.tryParse(discountController.text) ?? 0.0;
-              
+
               setDialogState(() {
                 totalAmount = cons + med + misc - disc;
               });
@@ -81,7 +95,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                         items: _patients.map<DropdownMenuItem<String>>((p) {
                           return DropdownMenuItem<String>(
                             value: p['patient_id'],
-                            child: Text(p['full_name']),
+                            child: Text('${p['full_name'] ?? '—'}'),
                           );
                         }).toList(),
                         onChanged: (val) {
@@ -92,7 +106,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                         validator: (v) => v == null ? 'Please select a patient' : null,
                       ),
                       const SizedBox(height: 12),
-                      
+
                       // Consultation Fee
                       TextFormField(
                         controller: consultationController,
@@ -102,7 +116,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                         validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
                       ),
                       const SizedBox(height: 12),
-                      
+
                       // Medicine Charges
                       TextFormField(
                         controller: medicineController,
@@ -112,7 +126,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                         validator: (v) => v == null || v.isEmpty ? 'Required field' : null,
                       ),
                       const SizedBox(height: 12),
-                      
+
                       // Misc Charges
                       TextFormField(
                         controller: miscController,
@@ -121,7 +135,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                         onChanged: (_) => calculateTotal(),
                       ),
                       const SizedBox(height: 12),
-                      
+
                       // Discount
                       TextFormField(
                         controller: discountController,
@@ -130,7 +144,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
                         onChanged: (_) => calculateTotal(),
                       ),
                       const SizedBox(height: 16),
-                      
+
                       // Total Highlight
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -153,29 +167,41 @@ class _BillingInvoiceState extends State<BillingInvoice> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: submitting ? null : () => Navigator.pop(context),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () async {
-                    if (formKey.currentState!.validate() && selectedPatientId != null) {
-                      final result = await _apiService.createInvoice({
-                        'patient_id': selectedPatientId,
-                        'consultation_fee': double.tryParse(consultationController.text) ?? 0.0,
-                        'medicine_charges': double.tryParse(medicineController.text) ?? 0.0,
-                        'misc_charges': double.tryParse(miscController.text) ?? 0.0,
-                        'discount': double.tryParse(discountController.text) ?? 0.0,
-                      });
-                      if (result != null) {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Draft invoice created successfully.')),
-                        );
-                        _fetchInvoices();
-                      }
-                    }
-                  },
-                  child: const Text('Save Draft'),
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          if (formKey.currentState!.validate() && selectedPatientId != null) {
+                            setDialogState(() => submitting = true);
+                            try {
+                              await _apiService.createInvoice({
+                                'patient_id': selectedPatientId,
+                                'consultation_fee': double.tryParse(consultationController.text) ?? 0.0,
+                                'medicine_charges': double.tryParse(medicineController.text) ?? 0.0,
+                                'misc_charges': double.tryParse(miscController.text) ?? 0.0,
+                                'discount': double.tryParse(discountController.text) ?? 0.0,
+                              });
+                              if (!context.mounted) return;
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                const SnackBar(content: Text('Draft invoice created successfully.')),
+                              );
+                              _fetchData();
+                            } on ApiException catch (e) {
+                              if (!context.mounted) return;
+                              setDialogState(() => submitting = false);
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+                              );
+                            }
+                          }
+                        },
+                  child: submitting
+                      ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Save Draft'),
                 ),
               ],
             );
@@ -185,95 +211,19 @@ class _BillingInvoiceState extends State<BillingInvoice> {
     );
   }
 
-  void _openPaymentDialog(Map<String, dynamic> inv) {
-    final formKey = GlobalKey<FormState>();
-    final amountController = TextEditingController(text: inv['due_amount'].toString());
-    final txController = TextEditingController();
-    
-    String mode = "UPI"; // Cash, Card, UPI, Online
-
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Collect Payment: Invoice #${inv['invoice_id'].substring(0, 8)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-          content: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Total: ₹${inv['total_amount']}  ·  Due: ₹${inv['due_amount']}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: amountController,
-                  decoration: const InputDecoration(labelText: 'Amount to Pay (₹) *'),
-                  keyboardType: TextInputType.number,
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'Required field';
-                    final amt = double.tryParse(v) ?? 0.0;
-                    if (amt <= 0) return 'Must be greater than 0';
-                    if (amt > inv['due_amount']) return 'Cannot exceed due amount';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: mode,
-                  decoration: const InputDecoration(labelText: 'Payment Mode *'),
-                  items: const [
-                    DropdownMenuItem(value: 'UPI', child: Text('UPI / QR Code')),
-                    DropdownMenuItem(value: 'Cash', child: Text('Cash Payment')),
-                    DropdownMenuItem(value: 'Card', child: Text('POS Card Swipe')),
-                    DropdownMenuItem(value: 'Online', child: Text('Razorpay Gateway')),
-                  ],
-                  onChanged: (val) => mode = val ?? 'UPI',
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: txController,
-                  decoration: const InputDecoration(labelText: 'Transaction ID / Ref (Optional)'),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  final result = await _apiService.recordPayment(
-                    inv['invoice_id'],
-                    double.parse(amountController.text),
-                    mode,
-                    txId: txController.text.isNotEmpty ? txController.text.trim() : null,
-                  );
-                  if (result != null) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Payment of ₹${amountController.text} recorded successfully.')),
-                    );
-                    _fetchInvoices();
-                  }
-                }
-              },
-              child: const Text('Record Pay'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _issueInvoice(String invoiceId) async {
-    final result = await _apiService.issueInvoice(invoiceId);
-    if (result != null) {
+    try {
+      await _apiService.issueInvoice(invoiceId);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Invoice issued successfully.')),
       );
-      _fetchInvoices();
+      _fetchData();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -286,9 +236,9 @@ class _BillingInvoiceState extends State<BillingInvoice> {
     int unpaidCount = 0;
 
     for (var inv in _invoices) {
-      totalPaid += inv['paid_amount'];
-      totalDue += inv['due_amount'];
-      if (inv['status'] == 'Paid') {
+      totalPaid += _parseAmount(inv['paid_amount']);
+      totalDue += _parseAmount(inv['due_amount']);
+      if (inv['status'] == InvoiceStatus.paid) {
         paidCount++;
       } else {
         unpaidCount++;
@@ -337,7 +287,7 @@ class _BillingInvoiceState extends State<BillingInvoice> {
               ],
             ),
             const SizedBox(height: 32),
-            
+
             // Invoices Listing
             const Text(
               "Recent Transactions & Invoices",
@@ -345,56 +295,79 @@ class _BillingInvoiceState extends State<BillingInvoice> {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _invoices.isEmpty
-                      ? const Center(child: Text('No invoices recorded yet.'))
-                      : Card(
-                          child: ListView.separated(
-                            itemCount: _invoices.length,
-                            separatorBuilder: (context, index) => const Divider(color: Color(0xFFE2E8F0)),
-                            itemBuilder: (context, index) {
-                              final inv = _invoices[index];
-                              final patientName = inv['patient']?['full_name'] ?? 'Walk-In';
-                              final total = inv['total_amount'];
-                              final due = inv['due_amount'];
-                              final status = inv['status'];
-                              final invId = inv['invoice_id'].substring(0, 8).toUpperCase();
-                              
-                              return ListTile(
-                                leading: const CircleAvatar(
-                                  backgroundColor: Color(0xFFF1F5F9),
-                                  child: Icon(Icons.receipt_outlined, color: Color(0xFF475569)),
-                                ),
-                                title: Text(
-                                  'Invoice #$invId — Patient: $patientName',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                ),
-                                subtitle: Text(
-                                  'Total: ₹$total  ·  Due: ₹$due  ·  Status: $status',
-                                  style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (status == 'Draft')
-                                      TextButton(
-                                        onPressed: () => _issueInvoice(inv['invoice_id']),
-                                        child: const Text('Issue'),
-                                      ),
-                                    if (status == 'Issued' || status == 'Partially Paid')
-                                      ElevatedButton(
-                                        onPressed: () => _openPaymentDialog(inv),
-                                        child: const Text('Pay'),
-                                      ),
-                                    if (status == 'Paid')
-                                      const Icon(Icons.verified, color: Colors.green, size: 20),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
+              child: _error != null
+                  ? Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.cloud_off_rounded, size: 40, color: Color(0xFF94A3B8)),
+                        const SizedBox(height: 12),
+                        Text('Failed to load invoices\n$_error',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Color(0xFF64748B))),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: _fetchData,
+                          icon: const Icon(Icons.refresh, size: 16),
+                          label: const Text('Retry'),
                         ),
+                      ],
+                    )
+                  : _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _invoices.isEmpty
+                          ? const Center(child: Text('No invoices recorded yet.'))
+                          : Card(
+                              child: ListView.separated(
+                                itemCount: _invoices.length,
+                                separatorBuilder: (context, index) => const Divider(color: Color(0xFFE2E8F0)),
+                                itemBuilder: (context, index) {
+                                  final inv = _invoices[index];
+                                  final patientName =
+                                      inv['patient']?['full_name'] ?? inv['patient_id'] ?? 'Walk-In';
+                                  final total = _parseAmount(inv['total_amount']);
+                                  final due = _parseAmount(inv['due_amount']);
+                                  final status = '${inv['status'] ?? InvoiceStatus.draft}';
+                                  final invIdStr = '${inv['invoice_id'] ?? ''}';
+
+                                  return ListTile(
+                                    leading: const CircleAvatar(
+                                      backgroundColor: Color(0xFFF1F5F9),
+                                      child: Icon(Icons.receipt_outlined, color: Color(0xFF475569)),
+                                    ),
+                                    title: Text(
+                                      'Invoice #${invIdStr.length > 8 ? invIdStr.substring(0, 8).toUpperCase() : invIdStr.toUpperCase()} — Patient: $patientName',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                    ),
+                                    subtitle: Text(
+                                      'Total: ₹${total.toStringAsFixed(0)}  ·  Due: ₹${due.toStringAsFixed(0)}  ·  Status: $status',
+                                      style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                    ),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (status == InvoiceStatus.draft)
+                                          TextButton(
+                                            onPressed: () => _issueInvoice(inv['invoice_id']),
+                                            child: const Text('Issue'),
+                                          ),
+                                        // Payments only on Issued / Partially Paid invoices
+                                        if (status == InvoiceStatus.issued ||
+                                            status == InvoiceStatus.partiallyPaid)
+                                          ElevatedButton(
+                                            onPressed: () async {
+                                              final paid = await showRecordPaymentDialog(context, _apiService, inv);
+                                              if (paid) _fetchData();
+                                            },
+                                            child: const Text('Pay'),
+                                          ),
+                                        if (status == InvoiceStatus.paid)
+                                          const Icon(Icons.verified, color: Colors.green, size: 20),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
             ),
           ],
         ),

@@ -11,9 +11,6 @@ class ReportsManagement extends StatefulWidget {
 }
 
 class _ReportsManagementState extends State<ReportsManagement> {
-  final ApiService _apiService = ApiService();
-  bool _isLoading = false;
-
   final List<Map<String, dynamic>> _weeklyRevenue = [
     { "day": "Mon", "revenue": 14200.0 },
     { "day": "Tue", "revenue": 16800.0 },

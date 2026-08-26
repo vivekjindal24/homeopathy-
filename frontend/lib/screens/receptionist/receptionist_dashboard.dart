@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../core/constants.dart';
 import '../../services/api_service.dart';
+import 'queue_management.dart' show showProcessBillingDialog, showRecordPaymentDialog;
 
 // ─── Color System ────────────────────────────────────
 const cBg       = Color(0xFFF8FAFC);   // slate-50
@@ -36,9 +38,13 @@ const cSlate600 = Color(0xFF475569);
 const cPurple50 = Color(0xFFFAF5FF);
 const cPurple100= Color(0xFFEDE9FE);
 const cPurple700= Color(0xFF7E22CE);
-const cOrange50 = Color(0xFFFFF7ED);
-const cOrange100= Color(0xFFFFEDD5);
-const cOrange500= Color(0xFFF97316);
+
+double _parseAmount(dynamic v) => double.tryParse('${v ?? 0}') ?? 0.0;
+
+String _shortId(dynamic id) {
+  final s = '${id ?? ''}';
+  return s.length > 8 ? s.substring(0, 8).toUpperCase() : s.toUpperCase();
+}
 
 class ReceptionistDashboard extends StatefulWidget {
   const ReceptionistDashboard({super.key});
@@ -50,15 +56,13 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   final ApiService _api = ApiService();
   String _tab = 'dashboard';
   bool _loading = false;
-  List<dynamic> _clinics = [];
+  String? _error;
   String? _clinicId;
   String _date = DateTime.now().toIso8601String().split('T')[0];
   Map<String, dynamic> _kpis = {'today_patients': 0, 'active_queue': 0, 'today_revenue': 0.0, 'pending_dues': 0.0};
   List<dynamic> _appointments = [];
   List<dynamic> _patients = [];
   List<dynamic> _invoices = [];
-  List<dynamic> _queue = [];
-  String _searchQ = '';
 
   final _navGroups = [
     {
@@ -85,9 +89,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     {
       'label': 'CLINIC',
       'items': [
-        {'key': 'inventory', 'label': 'Inventory', 'icon': Icons.inventory_2_outlined},
         {'key': 'reports', 'label': 'Reports', 'icon': Icons.bar_chart_rounded},
-        {'key': 'notifications', 'label': 'Notifications', 'icon': Icons.notifications_none_rounded, 'badge': 'notif'},
         {'key': 'settings', 'label': 'Settings', 'icon': Icons.settings_outlined},
       ],
     },
@@ -100,9 +102,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     'queue':         {'title': 'Queue Management', 'subtitle': 'Real-time patient flow board'},
     'billing':       {'title': 'Billing & Invoices', 'subtitle': 'Invoice builder & collection'},
     'payments':      {'title': 'Payments', 'subtitle': 'Collections, modes & refund requests'},
-    'inventory':     {'title': 'Inventory', 'subtitle': 'Medicine stock & movements'},
     'reports':       {'title': 'Reports', 'subtitle': 'Day-end summary & analytics'},
-    'notifications': {'title': 'Notifications', 'subtitle': 'Alerts & system messages'},
     'settings':      {'title': 'Settings', 'subtitle': 'Profile & preferences'},
   };
 
@@ -113,47 +113,109 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   }
 
   Future<void> _fetchData() async {
-    setState(() => _loading = true);
-    final clinics = await _api.getClinics();
-    if (clinics.isNotEmpty) {
-      _clinicId = clinics.first['clinic_id'];
-      _clinics = clinics;
-    }
-    if (_clinicId != null) {
-      final kpis    = await _api.getKpis(_clinicId!, _date);
-      final appts   = await _api.getAppointments(clinicId: _clinicId, date: _date);
-      final pts     = await _api.getPatients();
-      final invs    = await _api.getInvoices();
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final clinics = await _api.getClinics();
+      if (!mounted) return;
+      if (clinics.isNotEmpty) {
+        _clinicId = clinics.first['clinic_id'];
+      }
+      if (_clinicId != null) {
+        // Parallel fetches for KPIs + lists
+        final results = await Future.wait([
+          _api.getKpis(_clinicId!, _date),
+          _api.getAppointments(clinicId: _clinicId, date: _date),
+          _api.getPatients(),
+          _api.getInvoices(),
+        ]);
+        if (!mounted) return;
+        setState(() {
+          _kpis = results[0] as Map<String, dynamic>;
+          _appointments = results[1] as List<dynamic>;
+          _patients = results[2] as List<dynamic>;
+          _invoices = results[3] as List<dynamic>;
+          _loading = false;
+        });
+      } else {
+        if (!mounted) return;
+        setState(() => _loading = false);
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
       setState(() {
-        if (kpis != null) _kpis = kpis;
-        _appointments = appts;
-        _patients = pts;
-        _invoices = invs;
-        _queue = appts.where((a) => ['Waiting','In Consultation','Arrived'].contains(a['status'])).toList();
+        _error = e.message;
         _loading = false;
       });
-    } else {
-      setState(() => _loading = false);
     }
   }
 
   void _signOut() {
-    _api.logout();
+    _api.logoutRemote();
     Navigator.pushReplacementNamed(context, '/');
   }
 
   // ─── UPDATE APPT STATUS ─────────────────────────────
-  Future<void> _updateStatus(String apptId, String status) async {
+  Future<void> _updateStatus(String apptId, String status, {String? reason}) async {
     try {
-      await _api.updateAppointmentStatus(apptId, status);
+      await _api.updateAppointmentStatus(apptId, status, reason: reason);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Status updated to $status.'),
+        backgroundColor: cEm600,
+      ));
       _fetchData();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.toString().replaceAll('Exception: ', '')),
-          backgroundColor: cRed600,
-        ));
-      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e.message),
+        backgroundColor: cRed600,
+      ));
+    }
+  }
+
+  /// Cancellation requires a reason (backend rejects without one).
+  Future<void> _cancelWithReason(dynamic appt) async {
+    final reasonController = TextEditingController();
+    final apptId = appt['appt_id'];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.red),
+          SizedBox(width: 8),
+          Text('Cancel Appointment'),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('A cancellation reason is required.'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: reasonController,
+            maxLines: 2,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Reason *',
+              hintText: 'e.g. Patient requested reschedule',
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep Appointment')),
+          ElevatedButton(
+            onPressed: () {
+              if (reasonController.text.trim().isEmpty) return;
+              Navigator.pop(ctx, true);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: cRed600),
+            child: const Text('Yes, Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _updateStatus(apptId, AppointmentStatus.cancelled, reason: reasonController.text.trim());
     }
   }
 
@@ -171,7 +233,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                 _buildTopBar(),
                 Expanded(child: _loading
                     ? const Center(child: CircularProgressIndicator(color: cPrimary))
-                    : _buildBody()),
+                    : _error != null
+                        ? _buildErrorState()
+                        : _buildBody()),
               ],
             ),
           ),
@@ -180,9 +244,27 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     );
   }
 
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.cloud_off_rounded, size: 44, color: cSlate400),
+        const SizedBox(height: 12),
+        Text('Failed to load dashboard\n$_error',
+            textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: cMuted)),
+        const SizedBox(height: 14),
+        ElevatedButton.icon(
+          onPressed: _fetchData,
+          icon: const Icon(Icons.refresh_rounded, size: 16),
+          label: const Text('Retry'),
+          style: ElevatedButton.styleFrom(backgroundColor: cPrimary, foregroundColor: Colors.white),
+        ),
+      ]),
+    );
+  }
+
   // ─── SIDEBAR ─────────────────────────────────────────
   Widget _buildSidebar() {
-    final waitingCount = _appointments.where((a) => a['status'] == 'Waiting' || a['status'] == 'Arrived').length;
+    final waitingCount = _appointments.where((a) => a['status'] == QueueColumn.waiting).length;
 
     return Container(
       width: 240,
@@ -259,7 +341,6 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
                         int badgeCount = 0;
                         if (badgeK == 'queue') badgeCount = waitingCount;
-                        if (badgeK == 'notif') badgeCount = 3;
 
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 1),
@@ -279,7 +360,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                                 if (badgeCount > 0) Container(
                                   width: 18, height: 18,
                                   decoration: BoxDecoration(
-                                    color: badgeK == 'queue' ? const Color(0xFFF59E0B) : cRed600,
+                                    color: const Color(0xFFF59E0B),
                                     borderRadius: BorderRadius.circular(100),
                                   ),
                                   child: Center(child: Text('$badgeCount', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white))),
@@ -300,30 +381,17 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: const BoxDecoration(border: Border(top: BorderSide(color: cBorder))),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                InkWell(
-                  onTap: _signOut,
-                  borderRadius: BorderRadius.circular(8),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    child: Row(children: [
-                      Icon(Icons.logout_rounded, size: 14, color: cMuted),
-                      SizedBox(width: 8),
-                      Text('Switch Role', style: TextStyle(fontSize: 12, color: cMuted)),
-                    ]),
-                  ),
-                ),
-                const Padding(
-                  padding: EdgeInsets.only(left: 8, top: 4),
-                  child: Row(children: [
-                    CircleAvatar(backgroundColor: cEm600, radius: 3),
-                    SizedBox(width: 6),
-                    Text('Synced · 2s ago', style: TextStyle(fontSize: 11, color: cMuted)),
-                  ]),
-                ),
-              ],
+            child: InkWell(
+              onTap: _signOut,
+              borderRadius: BorderRadius.circular(8),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Row(children: [
+                  Icon(Icons.logout_rounded, size: 14, color: cMuted),
+                  SizedBox(width: 8),
+                  Text('Switch Role', style: TextStyle(fontSize: 12, color: cMuted)),
+                ]),
+              ),
             ),
           ),
         ],
@@ -368,15 +436,6 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         const SizedBox(width: 12),
         Text(dateStr, style: const TextStyle(fontSize: 11, color: cMuted)),
         const SizedBox(width: 8),
-        // Bell
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            IconButton(onPressed: () => setState(() => _tab = 'notifications'), icon: const Icon(Icons.notifications_none_rounded, size: 20, color: cMuted)),
-            Positioned(top: 8, right: 8, child: Container(width: 7, height: 7, decoration: BoxDecoration(color: cRed600, borderRadius: BorderRadius.circular(100), border: Border.all(color: Colors.white, width: 1.2)))),
-          ],
-        ),
-        const SizedBox(width: 4),
         // Avatar chip
         InkWell(
           onTap: _signOut,
@@ -403,6 +462,8 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     );
   }
 
+  String _searchQ = '';
+
   // ─── BODY ROUTER ─────────────────────────────────────
   Widget _buildBody() {
     switch (_tab) {
@@ -412,9 +473,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       case 'queue':         return _buildQueueTab();
       case 'billing':       return _buildBillingTab();
       case 'payments':      return _buildPaymentsTab();
-      case 'inventory':     return _buildInventoryTab();
       case 'reports':       return _buildReportsTab();
-      case 'notifications': return _buildNotificationsTab();
       case 'settings':      return _buildSettingsTab();
       default:              return _buildDashboardTab();
     }
@@ -422,17 +481,15 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   // ─── TAB 1: DASHBOARD ────────────────────────────────
   Widget _buildDashboardTab() {
-    final waiting = _appointments.where((a) => a['status'] == 'Waiting' || a['status'] == 'Arrived').length;
-    final inConsult = _appointments.where((a) => a['status'] == 'In Consultation').length;
-    final completed = _appointments.where((a) => a['status'] == 'Completed').length;
+    final waiting = _appointments.where((a) => a['status'] == QueueColumn.waiting).length;
+    final inConsult = _appointments.where((a) => a['status'] == AppointmentStatus.inConsultation).length;
+    final completed = _appointments.where((a) => a['status'] == AppointmentStatus.completed).length;
 
     final kpis = [
-      {'label': "Today's Patients", 'value': '${_kpis['today_patients'] ?? 0}', 'delta': '+4 vs yesterday', 'up': true, 'icon': Icons.people_outline_rounded, 'iconColor': const Color(0xFF2563EB), 'iconBg': cBlue50},
+      {'label': "Today's Patients", 'value': '${_kpis['today_patients'] ?? 0}', 'delta': 'Registered today', 'up': true, 'icon': Icons.people_outline_rounded, 'iconColor': const Color(0xFF2563EB), 'iconBg': cBlue50},
       {'label': 'Active Queue', 'value': '$waiting', 'delta': '$waiting waiting · $inConsult in consult', 'up': null, 'icon': Icons.format_list_numbered_rounded, 'iconColor': cAmber700, 'iconBg': cAmber50},
-      {'label': "Today's Revenue", 'value': '₹${(_kpis['today_revenue'] ?? 0.0).toStringAsFixed(0)}', 'delta': '+₹2,100 vs avg', 'up': true, 'icon': Icons.currency_rupee_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
-      {'label': 'Pending Payments', 'value': '₹${(_kpis['pending_dues'] ?? 0.0).toStringAsFixed(0)}', 'delta': '${_invoices.where((i) => i['status'] == 'Partial' || i['status'] == 'Draft').length} invoices due', 'up': false, 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
-      {'label': 'Low Stock Medicines', 'value': '7', 'delta': 'Reorder needed', 'up': false, 'icon': Icons.inventory_2_outlined, 'iconColor': cOrange500, 'iconBg': cOrange50},
-      {'label': 'Near Expiry', 'value': '3', 'delta': 'Expiring in 30 days', 'up': false, 'icon': Icons.calendar_today_outlined, 'iconColor': cPurple700, 'iconBg': cPurple50},
+      {'label': "Today's Revenue", 'value': '₹${_parseAmount(_kpis['today_revenue']).toStringAsFixed(0)}', 'delta': 'Collected today', 'up': true, 'icon': Icons.currency_rupee_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
+      {'label': 'Pending Payments', 'value': '₹${_parseAmount(_kpis['pending_dues']).toStringAsFixed(0)}', 'delta': '${_invoices.where((i) => i['status'] == InvoiceStatus.partiallyPaid || i['status'] == InvoiceStatus.draft || i['status'] == InvoiceStatus.issued).length} invoices open', 'up': false, 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
     ];
 
     final recentPts = _patients.take(3).toList();
@@ -443,30 +500,27 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
       {'label': 'Walk-In', 'icon': Icons.directions_walk_rounded, 'color': cAmber700, 'bg': cAmber50, 'tab': 'queue'},
       {'label': 'Generate Invoice', 'icon': Icons.receipt_long_outlined, 'color': cSlate600, 'bg': cSlate100, 'tab': 'billing'},
       {'label': 'Record Payment', 'icon': Icons.payments_outlined, 'color': cEm600, 'bg': cEm50, 'tab': 'payments'},
-      {'label': 'Add Stock', 'icon': Icons.add_box_outlined, 'color': cPurple700, 'bg': cPurple50, 'tab': 'inventory'},
     ];
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(children: [
         // KPI Grid
-        _sectionWrap(
-          child: GridView.count(
-            crossAxisCount: 6, mainAxisSpacing: 16, crossAxisSpacing: 16,
-            childAspectRatio: 1.1, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-            children: kpis.map((k) {
-              final up = k['up'];
-              return _kpiCard(
-                label: k['label'] as String,
-                value: k['value'] as String,
-                delta: k['delta'] as String,
-                deltaUp: up as bool?,
-                icon: k['icon'] as IconData,
-                iconColor: k['iconColor'] as Color,
-                iconBg: k['iconBg'] as Color,
-              );
-            }).toList(),
-          ),
+        GridView.count(
+          crossAxisCount: 4, mainAxisSpacing: 16, crossAxisSpacing: 16,
+          childAspectRatio: 1.65, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+          children: kpis.map((k) {
+            final up = k['up'];
+            return _kpiCard(
+              label: k['label'] as String,
+              value: k['value'] as String,
+              delta: k['delta'] as String,
+              deltaUp: up as bool?,
+              icon: k['icon'] as IconData,
+              iconColor: k['iconColor'] as Color,
+              iconBg: k['iconBg'] as Color,
+            );
+          }).toList(),
         ),
         const SizedBox(height: 20),
 
@@ -478,13 +532,11 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         ]),
         const SizedBox(height: 20),
 
-        // Bottom row: Recent Payments, Patients, Inventory, Quick Actions
+        // Bottom row: Recent Payments, Patients, Quick Actions
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(child: _buildRecentPaymentsCard(recentPays)),
           const SizedBox(width: 16),
           Expanded(child: _buildRecentPatientsCard(recentPts)),
-          const SizedBox(width: 16),
-          Expanded(child: _buildInventoryActivityCard()),
           const SizedBox(width: 16),
           Expanded(child: _buildQuickActionsCard(quickActions)),
         ]),
@@ -513,7 +565,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   }
 
   Widget _buildQueuePreview(int waiting, int inConsult, int completed) {
-    final noShow = _appointments.where((a) => a['status'] == 'No Show').length;
+    final noShow = _appointments.where((a) => a['status'] == AppointmentStatus.noShow).length;
     final cols = [
       {'label': 'Waiting', 'count': waiting, 'color': cAmber700, 'bg': cAmber50, 'border': cAmber200},
       {'label': 'In Consultation', 'count': inConsult, 'color': cBlue700, 'bg': cBlue50, 'border': cBlue200},
@@ -547,10 +599,10 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
               final i = e.key; final col = e.value;
               final appts = _appointments.where((a) {
                 final s = a['status'];
-                if (i == 0) return s == 'Waiting' || s == 'Arrived';
-                if (i == 1) return s == 'In Consultation';
-                if (i == 2) return s == 'Completed';
-                return s == 'No Show';
+                if (i == 0) return s == QueueColumn.waiting;
+                if (i == 1) return s == QueueColumn.inConsultation;
+                if (i == 2) return s == QueueColumn.completed;
+                return s == QueueColumn.noShow;
               }).take(2).toList();
 
               return Expanded(
@@ -569,18 +621,19 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                     const SizedBox(height: 8),
                     ...appts.map((a) {
                       final name = a['patient']?['full_name'] ?? 'Walk-In';
+                      final token = a['token_number'];
                       return Container(
                         margin: const EdgeInsets.only(bottom: 6),
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(color: col['bg'] as Color, border: Border.all(color: col['border'] as Color), borderRadius: BorderRadius.circular(8)),
                         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                            Text('T-${a['token_number'] ?? '--'}', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: col['color'] as Color)),
-                            Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2), decoration: BoxDecoration(color: Colors.white.withOpacity(0.8), border: Border.all(color: cBorder), borderRadius: BorderRadius.circular(100)), child: Text(a['visit_type'] ?? 'Visit', style: const TextStyle(fontSize: 9, color: cMuted))),
+                            Text(token != null ? 'T-$token' : 'T--', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: col['color'] as Color)),
+                            Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2), decoration: BoxDecoration(color: Colors.white.withOpacity(0.8), border: Border.all(color: cBorder), borderRadius: BorderRadius.circular(100)), child: Text('${a['visit_type'] ?? 'Visit'}', style: const TextStyle(fontSize: 9, color: cMuted))),
                           ]),
                           const SizedBox(height: 3),
                           Text(name, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cFg)),
-                          Row(children: [const Icon(Icons.access_time_rounded, size: 10, color: cMuted), const SizedBox(width: 3), Text(a['appt_time'] ?? '', style: const TextStyle(fontSize: 9, color: cMuted))]),
+                          Row(children: [const Icon(Icons.access_time_rounded, size: 10, color: cMuted), const SizedBox(width: 3), Text('${a['appt_time'] ?? ''}', style: const TextStyle(fontSize: 9, color: cMuted))]),
                         ]),
                       );
                     }),
@@ -597,10 +650,10 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   Widget _buildApptOverview() {
     final total = _appointments.length;
-    final walkIns = _appointments.where((a) => a['visit_type'] == 'Walk-In').length;
-    final followUps = _appointments.where((a) => a['visit_type'] == 'Follow Up').length;
-    final completed = _appointments.where((a) => a['status'] == 'Completed').length;
-    final cancelled = _appointments.where((a) => a['status'] == 'Cancelled').length;
+    final walkIns = _appointments.where((a) => a['visit_type'] == VisitType.walkIn).length;
+    final followUps = _appointments.where((a) => a['visit_type'] == VisitType.followUp).length;
+    final completed = _appointments.where((a) => a['status'] == AppointmentStatus.completed).length;
+    final cancelled = _appointments.where((a) => a['status'] == AppointmentStatus.cancelled).length;
     final completionPct = total > 0 ? (completed / total * 100).round() : 0;
     final stats = [
       {'label': 'Total Today', 'value': total, 'color': cPrimary},
@@ -665,7 +718,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Recent Payments', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
+            const Text('Recent Invoices', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
             TextButton(onPressed: () => setState(() => _tab = 'payments'), child: const Text('View all', style: TextStyle(fontSize: 11, color: cPrimary))),
           ]),
         ),
@@ -673,18 +726,18 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         if (payments.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Text('No payments today', style: TextStyle(fontSize: 11, color: cMuted))),
         ...payments.map((inv) {
           final name = inv['patient']?['full_name'] ?? inv['patient_id'] ?? '—';
-          final amount = inv['total_amount'] ?? 0;
-          final status = inv['status'] ?? 'Draft';
-          final modeColors = {'UPI': cPurple50, 'Cash': cEm50, 'Card': cBlue50};
-          final modeTextColors = {'UPI': cPurple700, 'Cash': cEm700, 'Card': cBlue700};
-          final mode = 'UPI';
+          final amount = _parseAmount(inv['total_amount']);
+          final pays = inv['payments'] as List?;
+          final mode = (pays != null && pays.isNotEmpty) ? '${pays.last['payment_mode'] ?? '—'}' : 'Unpaid';
+          final modeColors = {PaymentMode.upi: cPurple50, PaymentMode.cash: cEm50, PaymentMode.card: cBlue50, PaymentMode.online: cEm50};
+          final modeTextColors = {PaymentMode.upi: cPurple700, PaymentMode.cash: cEm700, PaymentMode.card: cBlue700, PaymentMode.online: cEm700};
           return Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: const BoxDecoration(border: Border(top: BorderSide(color: cBorder))),
             child: Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(name, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cFg)),
-                Text('INV · Today', style: const TextStyle(fontSize: 10, color: cMuted)),
+                Text('INV · ${_shortId(inv['invoice_id'])}', style: const TextStyle(fontSize: 10, color: cMuted)),
               ])),
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Text('₹${amount.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cEm700)),
@@ -713,7 +766,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         ...patients.map((p) {
           final name = p['full_name'] ?? '—';
           final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
-          final phone = p['mobile_number'] ?? '—';
+          final phone = p['mobile_number'] ?? p['mobile'] ?? '—';
           return Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: const BoxDecoration(border: Border(top: BorderSide(color: cBorder))),
@@ -724,46 +777,6 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                 Text(name, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cFg)),
                 Text(phone, style: const TextStyle(fontSize: 10, color: cMuted)),
               ])),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: cBlue50, borderRadius: BorderRadius.circular(100)), child: const Text('New', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: cBlue700))),
-            ]),
-          );
-        }),
-      ]),
-    );
-  }
-
-  Widget _buildInventoryActivityCard() {
-    final items = [
-      {'medicine': 'Arnica Montana 200C', 'action': 'Stock In', 'qty': '+50 units', 'by': 'Priya', 'time': '09:00 AM'},
-      {'medicine': 'Belladonna 30C', 'action': 'Dispensed', 'qty': '-2 units', 'by': 'Dr. Verma', 'time': '10:22 AM'},
-      {'medicine': 'Nux Vomica 1M', 'action': 'Low Stock Alert', 'qty': '3 left', 'by': 'System', 'time': '10:00 AM'},
-    ];
-    return Container(
-      decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Inventory Activity', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
-            TextButton(onPressed: () => setState(() => _tab = 'inventory'), child: const Text('View all', style: TextStyle(fontSize: 11, color: cPrimary))),
-          ]),
-        ),
-        const Divider(height: 1, color: cBorder),
-        ...items.map((it) {
-          final qty = it['qty'] as String;
-          Color qtyColor = qty.startsWith('+') ? cEm600 : qty.startsWith('-') ? cRed600 : cAmber700;
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: const BoxDecoration(border: Border(top: BorderSide(color: cBorder))),
-            child: Row(children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(it['medicine'] as String, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cFg), maxLines: 1, overflow: TextOverflow.ellipsis),
-                Text('${it['by']} · ${it['time']}', style: const TextStyle(fontSize: 10, color: cMuted)),
-              ])),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text(qty, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: qtyColor)),
-                Text(it['action'] as String, style: const TextStyle(fontSize: 9, color: cMuted)),
-              ]),
             ]),
           );
         }),
@@ -805,115 +818,81 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   // ─── TAB 2: PATIENTS ─────────────────────────────────
   Widget _buildPatientsTab() {
-    final filters = ['All', 'Active', 'Follow-up due', 'New this week'];
-    String activeFilter = 'All';
-    return StatefulBuilder(builder: (ctx, setS) {
-      final filtered = _patients.where((p) {
-        if (_searchQ.isNotEmpty) {
-          final name = (p['full_name'] ?? '').toLowerCase();
-          final mobile = (p['mobile_number'] ?? '').toLowerCase();
-          if (!name.contains(_searchQ.toLowerCase()) && !mobile.contains(_searchQ.toLowerCase())) return false;
-        }
-        return true;
-      }).toList();
-
-      return Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Header
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Patients', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
-              Text('${filtered.length} total · ${_patients.where((p) => (p['created_at'] ?? '').contains(DateTime.now().toString().split(' ')[0])).length} added today', style: const TextStyle(fontSize: 12, color: cMuted)),
-            ]),
-            Row(children: [
-              _outlineBtn('Export', Icons.download_rounded, () {}),
-              const SizedBox(width: 8),
-              _primaryBtn('New Patient', Icons.add_rounded, () => _showAddPatientDialog()),
-            ]),
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Patients', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
+            Text('${_filteredPatients().length} total', style: const TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          const SizedBox(height: 16),
-
-          // Filters
-          Row(children: [
-            ...filters.map((f) => Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: InkWell(
-                onTap: () => setS(() => activeFilter = f),
-                borderRadius: BorderRadius.circular(100),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: activeFilter == f ? cAccent : cCard,
-                    border: Border.all(color: activeFilter == f ? cEm200 : cBorder),
-                    borderRadius: BorderRadius.circular(100),
-                  ),
-                  child: Text(f, style: TextStyle(fontSize: 11, color: activeFilter == f ? cFg : cMuted, fontWeight: activeFilter == f ? FontWeight.w600 : FontWeight.w400)),
-                ),
-              ),
-            )),
-          ]),
-          const SizedBox(height: 16),
-
-          // Table
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
-              child: Column(children: [
-                // Table header
-                Container(
-                  decoration: BoxDecoration(color: cMutedBg.withOpacity(0.6), borderRadius: const BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12))),
-                  child: const Row(children: [
-                    SizedBox(width: 16),
-                    Expanded(flex: 3, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Patient', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
-                    Expanded(flex: 2, child: Text('Code', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                    Expanded(flex: 2, child: Text('Phone', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                    Expanded(flex: 2, child: Text('Last Visit', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                    Expanded(flex: 2, child: Text('Status', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                    SizedBox(width: 16),
-                  ]),
-                ),
-                const Divider(height: 1, color: cBorder),
-                Expanded(
-                  child: filtered.isEmpty
-                      ? const Center(child: Text('No patients found', style: TextStyle(fontSize: 12, color: cMuted)))
-                      : ListView.separated(
-                          itemCount: filtered.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
-                          itemBuilder: (_, i) {
-                            final p = filtered[i];
-                            final name = p['full_name'] ?? '—';
-                            final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
-                            return InkWell(
-                              onTap: () {},
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                child: Row(children: [
-                                  Expanded(flex: 3, child: Row(children: [
-                                    Container(width: 32, height: 32, decoration: BoxDecoration(color: cMutedBg, borderRadius: BorderRadius.circular(100)), child: Center(child: Text(initial, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cMuted)))),
-                                    const SizedBox(width: 10),
-                                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                      Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg)),
-                                      Text('${p['age'] ?? '?'}y · ${p['gender'] ?? ''}', style: const TextStyle(fontSize: 10, color: cMuted)),
-                                    ])),
-                                  ])),
-                                  Expanded(flex: 2, child: Text(p['unique_patient_id'] ?? '—', style: const TextStyle(fontSize: 11, color: cPrimary, fontFamily: 'monospace'))),
-                                  Expanded(flex: 2, child: Text(p['mobile_number'] ?? '—', style: const TextStyle(fontSize: 11, color: cFg))),
-                                  Expanded(flex: 2, child: Text('Today', style: const TextStyle(fontSize: 11, color: cMuted))),
-                                  Expanded(flex: 2, child: _statusPill('active')),
-                                  const Icon(Icons.chevron_right_rounded, size: 16, color: cMuted),
-                                ]),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ]),
-            ),
-          ),
+          _primaryBtn('New Patient', Icons.add_rounded, () => _showAddPatientDialog()),
         ]),
-      );
-    });
+        const SizedBox(height: 16),
+
+        // Table
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
+            child: Column(children: [
+              // Table header
+              Container(
+                decoration: BoxDecoration(color: cMutedBg.withOpacity(0.6), borderRadius: const BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12))),
+                child: const Row(children: [
+                  SizedBox(width: 16),
+                  Expanded(flex: 3, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Patient', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
+                  Expanded(flex: 2, child: Text('Code', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                  Expanded(flex: 2, child: Text('Phone', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                  Expanded(flex: 2, child: Text('DOB', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                  SizedBox(width: 16),
+                ]),
+              ),
+              const Divider(height: 1, color: cBorder),
+              Expanded(
+                child: _filteredPatients().isEmpty
+                    ? Center(child: Text(_searchQ.isEmpty ? 'No patients found' : 'No matches for “$_searchQ”', style: const TextStyle(fontSize: 12, color: cMuted)))
+                    : ListView.separated(
+                        itemCount: _filteredPatients().length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
+                        itemBuilder: (_, i) {
+                          final p = _filteredPatients()[i];
+                          final name = p['full_name'] ?? '—';
+                          final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            child: Row(children: [
+                              Expanded(flex: 3, child: Row(children: [
+                                Container(width: 32, height: 32, decoration: BoxDecoration(color: cMutedBg, borderRadius: BorderRadius.circular(100)), child: Center(child: Text(initial, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cMuted)))),
+                                const SizedBox(width: 10),
+                                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                  Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg)),
+                                  Text('${p['age'] ?? '?'}y · ${p['gender'] ?? ''}', style: const TextStyle(fontSize: 10, color: cMuted)),
+                                ])),
+                              ])),
+                              Expanded(flex: 2, child: Text(p['unique_patient_id'] ?? '—', style: const TextStyle(fontSize: 11, color: cPrimary, fontFamily: 'monospace'))),
+                              Expanded(flex: 2, child: Text(p['mobile_number'] ?? p['mobile'] ?? '—', style: const TextStyle(fontSize: 11, color: cFg))),
+                              Expanded(flex: 2, child: Text(p['dob'] ?? '—', style: const TextStyle(fontSize: 11, color: cMuted))),
+                            ]),
+                          );
+                        },
+                      ),
+              ),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  List<dynamic> _filteredPatients() {
+    if (_searchQ.isEmpty) return _patients;
+    final q = _searchQ.toLowerCase();
+    return _patients.where((p) {
+      final name = (p['full_name'] ?? '').toString().toLowerCase();
+      final mobile = (p['mobile_number'] ?? p['mobile'] ?? '').toString().toLowerCase();
+      return name.contains(q) || mobile.contains(q);
+    }).toList();
   }
 
   // ─── TAB 3: APPOINTMENTS ─────────────────────────────
@@ -926,11 +905,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
             Text('Appointments', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
             Text('Schedule, walk-ins & calendar', style: TextStyle(fontSize: 12, color: cMuted)),
           ]),
-          Row(children: [
-            _outlineBtn('Export', Icons.download_rounded, () {}),
-            const SizedBox(width: 8),
-            _primaryBtn('Book Appointment', Icons.add_rounded, () => _showBookApptDialog()),
-          ]),
+          _primaryBtn('Book Appointment', Icons.add_rounded, () => _showBookApptDialog()),
         ]),
         const SizedBox(height: 16),
         Expanded(
@@ -946,7 +921,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                   Expanded(flex: 3, child: Text('Patient', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                   Expanded(flex: 2, child: Text('Type', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                   Expanded(flex: 2, child: Text('Status', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 2, child: Text('Actions', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                  Expanded(flex: 3, child: Text('Actions', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                   SizedBox(width: 16),
                 ]),
               ),
@@ -960,19 +935,27 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                         itemBuilder: (_, i) {
                           final a = _appointments[i];
                           final name = a['patient']?['full_name'] ?? 'Walk-In';
-                          final status = a['status'] ?? 'Scheduled';
+                          final status = '${a['status'] ?? ''}';
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                             child: Row(children: [
                               Expanded(flex: 2, child: Text(a['appt_date'] ?? _date, style: const TextStyle(fontSize: 11, color: cFg))),
                               Expanded(flex: 1, child: Text(a['appt_time'] ?? '—', style: const TextStyle(fontSize: 11, color: cMuted))),
                               Expanded(flex: 3, child: Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
-                              Expanded(flex: 2, child: Text(a['visit_type'] ?? '—', style: const TextStyle(fontSize: 11, color: cMuted))),
-                              Expanded(flex: 2, child: _statusPill(status.toLowerCase())),
-                              Expanded(flex: 2, child: Row(children: [
-                                if (status == 'Scheduled' || status == 'Confirmed') _smallBtn('Confirm', cEm50, cEm700, () => _updateStatus(a['appt_id'], 'Arrived')),
-                                const SizedBox(width: 4),
-                                _smallBtn('Arrive', cBlue50, cBlue700, () => _updateStatus(a['appt_id'], 'Arrived')),
+                              Expanded(flex: 2, child: Text('${a['visit_type'] ?? '—'}', style: const TextStyle(fontSize: 11, color: cMuted))),
+                              Expanded(flex: 2, child: _statusPill(status)),
+                              Expanded(flex: 3, child: Row(children: [
+                                if (status == AppointmentStatus.scheduled)
+                                  _smallBtn('Confirm', cEm50, cEm700, () => _updateStatus(a['appt_id'], AppointmentStatus.confirmed)),
+                                if (status == AppointmentStatus.confirmed) _smallBtn('Arrive', cBlue50, cBlue700, () => _updateStatus(a['appt_id'], AppointmentStatus.arrived)),
+                                if (status == AppointmentStatus.arrived)
+                                  _smallBtn('Start', cPurple100, cPurple700, () => _updateStatus(a['appt_id'], AppointmentStatus.inConsultation)),
+                                if (status != AppointmentStatus.cancelled &&
+                                    status != AppointmentStatus.completed &&
+                                    status != AppointmentStatus.inConsultation) ...[
+                                  const SizedBox(width: 4),
+                                  _smallBtn('Cancel', cRed100, cRed600, () => _cancelWithReason(a)),
+                                ],
                               ])),
                             ]),
                           );
@@ -988,10 +971,10 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   // ─── TAB 4: QUEUE ────────────────────────────────────
   Widget _buildQueueTab() {
-    final waiting    = _appointments.where((a) => a['status'] == 'Waiting' || a['status'] == 'Arrived').toList();
-    final consult    = _appointments.where((a) => a['status'] == 'In Consultation').toList();
-    final completed  = _appointments.where((a) => a['status'] == 'Completed').toList();
-    final noShow     = _appointments.where((a) => a['status'] == 'No Show').toList();
+    final waiting    = _appointments.where((a) => a['status'] == QueueColumn.waiting).toList();
+    final consult    = _appointments.where((a) => a['status'] == QueueColumn.inConsultation).toList();
+    final completed  = _appointments.where((a) => a['status'] == QueueColumn.completed).toList();
+    final noShow     = _appointments.where((a) => a['status'] == QueueColumn.noShow).toList();
     final activeC    = consult.isNotEmpty ? consult.first : null;
     final avgWait    = waiting.isNotEmpty ? '${(waiting.length * 8)} min avg' : '0 min';
 
@@ -1104,18 +1087,15 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   Widget _waitingCard(dynamic a) {
     final name = a['patient']?['full_name'] ?? 'Walk-In';
+    final token = a['token_number'];
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder), boxShadow: const [BoxShadow(color: Color(0x08000000), blurRadius: 4, offset: Offset(0, 1))]),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('T-${a['token_number'] ?? '--'}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: cAmber700, height: 1)),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            _tagBadge(a['visit_type'] ?? 'New', cBlue50, cBlue700),
-            const SizedBox(height: 4),
-            _tagBadge('Pending', cAmber50, cAmber700),
-          ]),
+          Text(token != null ? 'T-$token' : 'T--', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: cAmber700, height: 1)),
+          _tagBadge('${a['visit_type'] ?? 'New'}', cBlue50, cBlue700),
         ]),
         const SizedBox(height: 6),
         Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg)),
@@ -1124,13 +1104,13 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         const SizedBox(height: 10),
         Row(children: [
           Expanded(child: InkWell(
-            onTap: () => _updateStatus(a['appt_id'], 'In Consultation'),
+            onTap: () => _updateStatus(a['appt_id'], AppointmentStatus.inConsultation),
             borderRadius: BorderRadius.circular(8),
             child: Container(padding: const EdgeInsets.symmetric(vertical: 7), decoration: BoxDecoration(color: cPrimary, borderRadius: BorderRadius.circular(8)), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.play_arrow_rounded, size: 14, color: Colors.white), SizedBox(width: 4), Text('Start', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white))])),
           )),
           const SizedBox(width: 6),
           Expanded(child: InkWell(
-            onTap: () => _updateStatus(a['appt_id'], 'No Show'),
+            onTap: () => _updateStatus(a['appt_id'], AppointmentStatus.noShow),
             borderRadius: BorderRadius.circular(8),
             child: Container(padding: const EdgeInsets.symmetric(vertical: 7), decoration: BoxDecoration(border: Border.all(color: cBorder), borderRadius: BorderRadius.circular(8)), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.person_off_outlined, size: 14, color: cMuted), SizedBox(width: 4), Text('No Show', style: TextStyle(fontSize: 11, color: cMuted))])),
           )),
@@ -1141,6 +1121,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   Widget _activeConsultCard(dynamic a) {
     final name = a['patient']?['full_name'] ?? 'Walk-In';
+    final token = a['token_number'];
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: cBlue50, border: Border.all(color: cBlue200, width: 2), borderRadius: BorderRadius.circular(12)),
@@ -1151,7 +1132,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
           const Text('ACTIVE CONSULTATION', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: cBlue700, letterSpacing: 0.6)),
         ]),
         const SizedBox(height: 10),
-        Text('T-${a['token_number'] ?? '--'}', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: cBlue700, height: 1)),
+        Text(token != null ? 'T-$token' : 'T--', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: cBlue700, height: 1)),
         const SizedBox(height: 6),
         Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: cFg)),
         const SizedBox(height: 3),
@@ -1160,7 +1141,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: () => _updateStatus(a['appt_id'], 'Completed'),
+            onPressed: () => _updateStatus(a['appt_id'], AppointmentStatus.completed),
             icon: const Icon(Icons.check_circle_outline_rounded, size: 16),
             label: const Text('Complete Consultation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
             style: ElevatedButton.styleFrom(backgroundColor: cEm600, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 10), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), elevation: 0),
@@ -1172,39 +1153,47 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   Widget _completedCard(dynamic a) {
     final name = a['patient']?['full_name'] ?? 'Walk-In';
+    final token = a['token_number'];
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: cBorder)),
       child: Row(children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('T-${a['token_number'] ?? '--'}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: cEm600, height: 1)),
+          Text(token != null ? 'T-$token' : 'T--', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: cEm600, height: 1)),
           Text(name, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cFg)),
           Text(a['appt_time'] ?? '—', style: const TextStyle(fontSize: 10, color: cMuted)),
         ])),
-        Column(children: [
-          IconButton(icon: const Icon(Icons.receipt_long_outlined, size: 16, color: cMuted), onPressed: () => setState(() => _tab = 'billing'), tooltip: 'View Invoice'),
-          IconButton(icon: const Icon(Icons.currency_rupee_rounded, size: 16, color: cMuted), onPressed: () => setState(() => _tab = 'payments'), tooltip: 'Record Payment'),
-        ]),
+        IconButton(icon: const Icon(Icons.receipt_long_outlined, size: 16, color: cPrimary), tooltip: 'Process Billing', onPressed: () {
+          showProcessBillingDialog(
+            context,
+            api: _api,
+            patientId: a['patient_id'],
+            patientName: name,
+            apptId: a['appt_id'],
+            onDone: _fetchData,
+          );
+        }),
       ]),
     );
   }
 
   Widget _noShowCard(dynamic a) {
     final name = a['patient']?['full_name'] ?? 'Walk-In';
+    final token = a['token_number'];
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: cBorder)),
       child: Row(children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('T-${a['token_number'] ?? '--'}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: cSlate400, height: 1)),
+          Text(token != null ? 'T-$token' : 'T--', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: cSlate400, height: 1)),
           Text(name, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cFg)),
           Text(a['appt_time'] ?? '—', style: const TextStyle(fontSize: 10, color: cMuted)),
         ])),
         IconButton(
           icon: const Icon(Icons.refresh_rounded, size: 16, color: cMuted),
-          onPressed: () => _updateStatus(a['appt_id'], 'Waiting'),
+          onPressed: () => _updateStatus(a['appt_id'], QueueColumn.waiting),
           tooltip: 'Requeue',
         ),
       ]),
@@ -1212,20 +1201,31 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   }
 
   // ─── TAB 5: BILLING ──────────────────────────────────
+  static const _overdueFilter = 'Overdue';
+
   Widget _buildBillingTab() {
-    final statusFilters = ['All', 'Paid', 'Partial', 'Overdue', 'Draft'];
-    String activeStatus = 'All';
+    final statusFilters = ['All', InvoiceStatus.draft, InvoiceStatus.issued, InvoiceStatus.partiallyPaid, _overdueFilter, InvoiceStatus.paid];
+    final isOverdue = (dynamic inv) =>
+        inv['status'] == InvoiceStatus.issued && _parseAmount(inv['due_amount']) > 0;
+
     final metrics = [
       {'label': 'Total Invoices', 'value': '${_invoices.length}', 'icon': Icons.receipt_long_outlined, 'iconColor': cPrimary, 'iconBg': cEm50},
-      {'label': 'Paid', 'value': '${_invoices.where((i) => i['status'] == 'Paid').length}', 'icon': Icons.check_circle_outline_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
-      {'label': 'Partial', 'value': '${_invoices.where((i) => i['status'] == 'Partial').length}', 'icon': Icons.pending_outlined, 'iconColor': cAmber700, 'iconBg': cAmber50},
-      {'label': 'Overdue', 'value': '${_invoices.where((i) => i['status'] == 'Issued' || i['status'] == 'Draft').length}', 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
+      {'label': 'Paid', 'value': '${_invoices.where((i) => i['status'] == InvoiceStatus.paid).length}', 'icon': Icons.check_circle_outline_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
+      {'label': 'Partially Paid', 'value': '${_invoices.where((i) => i['status'] == InvoiceStatus.partiallyPaid).length}', 'icon': Icons.pending_outlined, 'iconColor': cAmber700, 'iconBg': cAmber50},
+      {'label': 'Overdue', 'value': '${_invoices.where(isOverdue).length}', 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
     ];
 
     return StatefulBuilder(builder: (ctx, setS) {
+      final activeStatus = _billingFilter;
       final filtered = _invoices.where((inv) {
-        if (activeStatus == 'All') return true;
-        return (inv['status'] ?? '') == activeStatus;
+        switch (activeStatus) {
+          case 'All':
+            return true;
+          case _overdueFilter:
+            return isOverdue(inv);
+          default:
+            return inv['status'] == activeStatus;
+        }
       }).toList();
 
       return Padding(
@@ -1260,7 +1260,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                     Expanded(child: Row(children: statusFilters.map((f) => Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: InkWell(
-                        onTap: () => setS(() => activeStatus = f),
+                        onTap: () => setS(() => _billingFilter = f),
                         borderRadius: BorderRadius.circular(6),
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1269,7 +1269,9 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                         ),
                       ),
                     )).toList())),
-                    _primaryBtn('New Invoice', Icons.add_rounded, () => _showCreateInvoiceDialog()),
+                    _primaryBtn('New Invoice', Icons.add_rounded, () {
+                      showProcessBillingDialog(context, api: _api, onDone: _fetchData);
+                    }),
                   ]),
                 ),
                 const Divider(height: 1, color: cBorder),
@@ -1279,7 +1281,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                     SizedBox(width: 16),
                     Expanded(flex: 2, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Invoice #', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
                     Expanded(flex: 3, child: Text('Patient', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                    Expanded(flex: 2, child: Text('Amount', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                    Expanded(flex: 2, child: Text('Due', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                     Expanded(flex: 2, child: Text('Paid', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                     Expanded(flex: 2, child: Text('Status', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                     Expanded(flex: 2, child: Text('Actions', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
@@ -1296,28 +1298,37 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                           itemBuilder: (_, i) {
                             final inv = filtered[i];
                             final patient = inv['patient']?['full_name'] ?? inv['patient_id'] ?? '—';
-                            final amount = inv['total_amount'] ?? 0;
-                            final paid = (inv['payments'] as List?)?.fold<double>(0, (s, p) => s + (p['amount'] ?? 0)) ?? 0;
-                            final status = inv['status'] ?? 'Draft';
-                            return InkWell(
-                              onTap: () {},
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                child: Row(children: [
-                                  Expanded(flex: 2, child: Text(inv['invoice_id']?.toString().substring(0, 8).toUpperCase() ?? '—', style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
-                                  Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                    Text(patient, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg)),
-                                  ])),
-                                  Expanded(flex: 2, child: Text('₹${(amount ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
-                                  Expanded(flex: 2, child: Text('₹${paid.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, color: cEm700))),
-                                  Expanded(flex: 2, child: _statusPill(status.toLowerCase())),
-                                  Expanded(flex: 2, child: Row(children: [
-                                    _smallBtn('View', cSlate100, cSlate600, () {}),
-                                    const SizedBox(width: 4),
-                                    if (status != 'Paid') _smallBtn('Pay', cEm100, cEm700, () => _showPaymentDialog(inv)),
-                                  ])),
-                                ]),
-                              ),
+                            final due = _parseAmount(inv['due_amount']);
+                            final paidAmt = _parseAmount(inv['paid_amount']);
+                            final status = '${inv['status'] ?? InvoiceStatus.draft}';
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              child: Row(children: [
+                                Expanded(flex: 2, child: Text(_shortId(inv['invoice_id']).isEmpty ? '—' : _shortId(inv['invoice_id']), style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary, fontWeight: FontWeight.w600))),
+                                Expanded(flex: 3, child: Text(patient, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
+                                Expanded(flex: 2, child: Text('₹${due.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cFg))),
+                                Expanded(flex: 2, child: Text('₹${paidAmt.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, color: cEm700))),
+                                Expanded(flex: 2, child: _statusPill(status)),
+                                Expanded(flex: 2, child: Row(children: [
+                                  if (status == InvoiceStatus.draft)
+                                    _smallBtn('Issue', cSlate100, cSlate600, () async {
+                                      try {
+                                        await _api.issueInvoice(inv['invoice_id']);
+                                        if (!mounted) return;
+                                        _fetchData();
+                                      } on ApiException catch (e) {
+                                        if (!mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message), backgroundColor: cRed600));
+                                      }
+                                    }),
+                                  // Payments only on Issued / Partially Paid invoices
+                                  if (status == InvoiceStatus.issued || status == InvoiceStatus.partiallyPaid)
+                                    _smallBtn('Pay', cEm100, cEm700, () async {
+                                      final recorded = await showRecordPaymentDialog(context, _api, inv);
+                                      if (recorded) _fetchData();
+                                    }),
+                                ])),
+                              ]),
                             );
                           },
                         ),
@@ -1330,13 +1341,48 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     });
   }
 
+  String _billingFilter = 'All';
+
   // ─── TAB 6: PAYMENTS ─────────────────────────────────
   Widget _buildPaymentsTab() {
+    double cashRev = 0, upiRev = 0, cardRev = 0, onlineRev = 0;
+    final records = <Map<String, dynamic>>[];
+    for (final inv in _invoices) {
+      final pays = inv['payments'] as List? ?? [];
+      final patientName = inv['patient']?['full_name'] ?? inv['patient_id'] ?? 'Walk-In';
+      for (final p in pays) {
+        final amt = _parseAmount(p['amount']);
+        switch (p['payment_mode']) {
+          case PaymentMode.cash:   cashRev += amt; break;
+          case PaymentMode.upi:    upiRev += amt; break;
+          case PaymentMode.card:   cardRev += amt; break;
+          case PaymentMode.online: onlineRev += amt; break;
+        }
+        records.add({
+          'id': p['payment_id'],
+          'name': patientName,
+          'amount': amt,
+          'mode': '${p['payment_mode'] ?? '—'}',
+          'paid_at': p['paid_at'],
+        });
+      }
+    }
+    // Newest first; missing timestamps sink to the bottom.
+    DateTime? dt(dynamic v) => (v == null || '$v'.isEmpty) ? null : DateTime.tryParse('$v');
+    records.sort((a, b) {
+      final da = dt(a['paid_at']), db = dt(b['paid_at']);
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+
     final payMetrics = [
-      {'label': 'Cash Collections', 'value': '₹8,200', 'icon': Icons.payments_outlined, 'iconColor': cEm600, 'iconBg': cEm50},
-      {'label': 'UPI Collections', 'value': '₹6,400', 'icon': Icons.phone_android_rounded, 'iconColor': cPurple700, 'iconBg': cPurple50},
-      {'label': 'Card Collections', 'value': '₹3,850', 'icon': Icons.credit_card_rounded, 'iconColor': const Color(0xFF2563EB), 'iconBg': cBlue50},
-      {'label': 'Pending Dues', 'value': '₹5,200', 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
+      {'label': 'Cash Collections', 'value': '₹${cashRev.toStringAsFixed(0)}', 'icon': Icons.payments_outlined, 'iconColor': cEm600, 'iconBg': cEm50},
+      {'label': 'UPI Collections', 'value': '₹${upiRev.toStringAsFixed(0)}', 'icon': Icons.phone_android_rounded, 'iconColor': cPurple700, 'iconBg': cPurple50},
+      {'label': 'Card Collections', 'value': '₹${cardRev.toStringAsFixed(0)}', 'icon': Icons.credit_card_rounded, 'iconColor': cBlue700, 'iconBg': cBlue50},
+      {'label': 'Online Collections', 'value': '₹${onlineRev.toStringAsFixed(0)}', 'icon': Icons.language_rounded, 'iconColor': cEm600, 'iconBg': cEm50},
+      {'label': 'Pending Dues', 'value': '₹${_parseAmount(_kpis['pending_dues']).toStringAsFixed(0)}', 'icon': Icons.warning_amber_rounded, 'iconColor': cRed600, 'iconBg': cRed50},
     ];
 
     return Padding(
@@ -1366,7 +1412,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   const Text('Payment Records', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
-                  _primaryBtn('Record Payment', Icons.add_rounded, () {}),
+                  Text('${records.length} transactions', style: const TextStyle(fontSize: 11, color: cMuted)),
                 ]),
               ),
               const Divider(height: 1, color: cBorder),
@@ -1376,98 +1422,41 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
                   SizedBox(width: 16),
                   Expanded(flex: 2, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Receipt No', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
                   Expanded(flex: 3, child: Text('Patient', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 2, child: Text('Invoice', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                   Expanded(flex: 2, child: Text('Amount', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                   Expanded(flex: 2, child: Text('Mode', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 2, child: Text('Status', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  SizedBox(width: 16),
-                ]),
-              ),
-              const Divider(height: 1, color: cBorder),
-              const Expanded(child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.account_balance_wallet_outlined, size: 32, color: cMuted),
-                SizedBox(height: 8),
-                Text('Payment records appear here', style: TextStyle(fontSize: 12, color: cMuted)),
-              ]))),
-            ]),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  // ─── TAB 7: INVENTORY ────────────────────────────────
-  Widget _buildInventoryTab() {
-    final mockInventory = [
-      {'name': 'Arnica Montana 200C', 'cat': 'Polychrest', 'qty': 48, 'unit': 'ml', 'expiry': '2025-12-31', 'batch': 'BT-2241', 'status': 'ok'},
-      {'name': 'Belladonna 30C', 'cat': 'Polychrest', 'qty': 6, 'unit': 'ml', 'expiry': '2025-04-15', 'batch': 'BT-2198', 'status': 'low'},
-      {'name': 'Nux Vomica 1M', 'cat': 'Constitutional', 'qty': 3, 'unit': 'ml', 'expiry': '2025-06-30', 'batch': 'BT-2201', 'status': 'low'},
-      {'name': 'Pulsatilla 30C', 'cat': 'Constitutional', 'qty': 22, 'unit': 'ml', 'expiry': '2025-05-10', 'batch': 'BT-2215', 'status': 'expiring'},
-      {'name': 'Sulphur 200C', 'cat': 'Polychrest', 'qty': 35, 'unit': 'ml', 'expiry': '2026-02-28', 'batch': 'BT-2250', 'status': 'ok'},
-    ];
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Inventory', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
-            Text('Medicine stock & movements', style: TextStyle(fontSize: 12, color: cMuted)),
-          ]),
-          _primaryBtn('Stock Inward', Icons.add_box_outlined, () => _showStockInwardDialog()),
-        ]),
-        const SizedBox(height: 16),
-        // Warning banners
-        Container(
-          padding: const EdgeInsets.all(12),
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(color: cAmber50, border: Border.all(color: cAmber200), borderRadius: BorderRadius.circular(10)),
-          child: const Row(children: [
-            Icon(Icons.warning_amber_rounded, size: 16, color: cAmber700),
-            SizedBox(width: 8),
-            Text('7 medicines are low on stock and 3 are expiring within 30 days. Please reorder immediately.', style: TextStyle(fontSize: 11, color: cAmber700)),
-          ]),
-        ),
-        Expanded(
-          child: Container(
-            decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
-            child: Column(children: [
-              Container(
-                color: cMutedBg.withOpacity(0.6),
-                child: const Row(children: [
-                  SizedBox(width: 16),
-                  Expanded(flex: 3, child: Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Text('Medicine', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted)))),
-                  Expanded(flex: 2, child: Text('Category', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 1, child: Text('Qty', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 2, child: Text('Expiry', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 1, child: Text('Status', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
-                  Expanded(flex: 2, child: Text('Actions', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
+                  Expanded(flex: 3, child: Text('Time', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cMuted))),
                   SizedBox(width: 16),
                 ]),
               ),
               const Divider(height: 1, color: cBorder),
               Expanded(
-                child: ListView.separated(
-                  itemCount: mockInventory.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
-                  itemBuilder: (_, i) {
-                    final it = mockInventory[i];
-                    final status = it['status'] as String;
-                    Color statusColor = status == 'ok' ? cEm700 : status == 'low' ? cAmber700 : cRed600;
-                    Color statusBg = status == 'ok' ? cEm50 : status == 'low' ? cAmber50 : cRed50;
-                    String statusLabel = status == 'ok' ? 'OK' : status == 'low' ? 'Low Stock' : 'Near Expiry';
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      child: Row(children: [
-                        Expanded(flex: 3, child: Text(it['name'] as String, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
-                        Expanded(flex: 2, child: Text(it['cat'] as String, style: const TextStyle(fontSize: 11, color: cMuted))),
-                        Expanded(flex: 1, child: Text('${it['qty']} ${it['unit']}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: (it['qty'] as int) < 10 ? cRed600 : cFg))),
-                        Expanded(flex: 2, child: Text(it['expiry'] as String, style: const TextStyle(fontSize: 11, color: cMuted))),
-                        Expanded(flex: 1, child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3), decoration: BoxDecoration(color: statusBg, borderRadius: BorderRadius.circular(100)), child: Text(statusLabel, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: statusColor)))),
-                        Expanded(flex: 2, child: _smallBtn('Stock In', cPrimary.withOpacity(0.1), cPrimary, () => _showStockInwardDialog())),
-                      ]),
-                    );
-                  },
-                ),
+                child: records.isEmpty
+                    ? const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(Icons.account_balance_wallet_outlined, size: 32, color: cMuted),
+                        SizedBox(height: 8),
+                        Text('Payment records appear here', style: TextStyle(fontSize: 12, color: cMuted)),
+                      ]))
+                    : ListView.separated(
+                        itemCount: records.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
+                        itemBuilder: (_, i) {
+                          final r = records[i];
+                          final d = dt(r['paid_at']);
+                          final timeStr = d != null
+                              ? '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}'
+                              : '—';
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            child: Row(children: [
+                              Expanded(flex: 2, child: Text('RCP-${_shortId(r['id'])}', style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: cPrimary))),
+                              Expanded(flex: 3, child: Text('${r['name']}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cFg))),
+                              Expanded(flex: 2, child: Text('₹${(r['amount'] as double).toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cEm700))),
+                              Expanded(flex: 2, child: _tagBadge('${r['mode']}', cBlue50, cBlue700)),
+                              Expanded(flex: 3, child: Text(timeStr, style: const TextStyle(fontSize: 11, color: cMuted))),
+                            ]),
+                          );
+                        },
+                      ),
               ),
             ]),
           ),
@@ -1476,17 +1465,14 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     );
   }
 
-  // ─── TAB 8: REPORTS ──────────────────────────────────
+  // ─── TAB 7: REPORTS ──────────────────────────────────
   Widget _buildReportsTab() {
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Reports', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
-            Text('Day-end summary & analytics', style: TextStyle(fontSize: 12, color: cMuted)),
-          ]),
-          _outlineBtn('Export Report', Icons.download_rounded, () {}),
+        const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Reports', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
+          Text('Day-end summary & analytics', style: TextStyle(fontSize: 12, color: cMuted)),
         ]),
         const SizedBox(height: 20),
         Expanded(
@@ -1538,29 +1524,48 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
   }
 
   Widget _buildCollectionChart() {
+    double upi = 0, cash = 0, card = 0, online = 0;
+    for (final inv in _invoices) {
+      for (final p in (inv['payments'] as List? ?? [])) {
+        final amt = _parseAmount(p['amount']);
+        switch (p['payment_mode']) {
+          case PaymentMode.upi:    upi += amt; break;
+          case PaymentMode.cash:   cash += amt; break;
+          case PaymentMode.card:   card += amt; break;
+          case PaymentMode.online: online += amt; break;
+        }
+      }
+    }
+    final collected = upi + cash + card + online;
+    double pct(double v) => collected > 0 ? v / collected * 100 : 0;
     final modes = [
-      {'name': 'UPI', 'pct': 48.0, 'color': cPrimary},
-      {'name': 'Cash', 'pct': 26.0, 'color': const Color(0xFF14B8A6)},
-      {'name': 'Card', 'pct': 18.0, 'color': const Color(0xFF5EEAD4)},
-      {'name': 'Net Banking', 'pct': 8.0, 'color': const Color(0xFF99F6E4)},
+      {'name': PaymentMode.upi, 'pct': pct(upi), 'color': cPrimary},
+      {'name': PaymentMode.cash, 'pct': pct(cash), 'color': const Color(0xFF14B8A6)},
+      {'name': PaymentMode.card, 'pct': pct(card), 'color': const Color(0xFF5EEAD4)},
+      {'name': PaymentMode.online, 'pct': pct(online), 'color': const Color(0xFF99F6E4)},
     ];
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('Collections by Mode', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cFg)),
-        const Text("Today · ₹18,450 collected", style: TextStyle(fontSize: 11, color: cMuted)),
+        Text(collected > 0 ? "Collected · ₹${collected.toStringAsFixed(0)}" : 'No collections yet', style: const TextStyle(fontSize: 11, color: cMuted)),
         const SizedBox(height: 16),
         // Simple stacked bar
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
+        if (collected > 0)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
           child: Row(
-            children: modes.map((m) => Expanded(
-              flex: (m['pct'] as double).toInt(),
-              child: Container(height: 14, color: m['color'] as Color),
-            )).toList(),
-          ),
-        ),
+              children: modes
+                  .where((m) => (m['pct'] as double) >= 0.5)
+                  .map((m) => Expanded(
+                        flex: (m['pct'] as double).round().clamp(1, 1000),
+                        child: Container(height: 14, color: m['color'] as Color),
+                      ))
+                  .toList()),
+          )
+        else
+          Container(height: 14, decoration: BoxDecoration(color: cSlate100, borderRadius: BorderRadius.circular(8))),
         const SizedBox(height: 16),
         ...modes.map((m) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
@@ -1575,56 +1580,7 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     );
   }
 
-  // ─── TAB 9: NOTIFICATIONS ────────────────────────────
-  Widget _buildNotificationsTab() {
-    final notifs = [
-      {'title': 'Low Stock Alert', 'body': 'Belladonna 30C stock is critically low (6 units). Reorder immediately.', 'time': '10:00 AM', 'type': 'warning', 'read': false},
-      {'title': 'New Patient Registered', 'body': 'Raj Patel (VHC-2042) has been registered by Priya Sharma.', 'time': '11:00 AM', 'type': 'info', 'read': false},
-      {'title': 'Consultation Completed', 'body': 'Anita Verma\'s consultation has been completed. Invoice pending.', 'time': '10:52 AM', 'type': 'success', 'read': true},
-    ];
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Notifications', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: cFg)),
-        const Text('Alerts & system messages', style: TextStyle(fontSize: 12, color: cMuted)),
-        const SizedBox(height: 16),
-        Expanded(
-          child: Container(
-            decoration: BoxDecoration(color: cCard, borderRadius: BorderRadius.circular(12), border: Border.all(color: cBorder)),
-            child: ListView.separated(
-              padding: EdgeInsets.zero,
-              itemCount: notifs.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, color: cBorder),
-              itemBuilder: (_, i) {
-                final n = notifs[i];
-                final isRead = n['read'] as bool;
-                final type = n['type'] as String;
-                final typeColor = type == 'warning' ? cAmber700 : type == 'success' ? cEm600 : cBlue700;
-                final typeBg = type == 'warning' ? cAmber50 : type == 'success' ? cEm50 : cBlue50;
-                return Container(
-                  color: isRead ? null : typeBg.withOpacity(0.3),
-                  padding: const EdgeInsets.all(16),
-                  child: Row(children: [
-                    Container(width: 36, height: 36, decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(100)), child: Icon(type == 'warning' ? Icons.warning_amber_rounded : type == 'success' ? Icons.check_circle_outline_rounded : Icons.info_outline_rounded, size: 18, color: typeColor)),
-                    const SizedBox(width: 12),
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(n['title'] as String, style: TextStyle(fontSize: 12, fontWeight: isRead ? FontWeight.w500 : FontWeight.w700, color: cFg)),
-                      const SizedBox(height: 3),
-                      Text(n['body'] as String, style: const TextStyle(fontSize: 11, color: cMuted)),
-                    ])),
-                    Text(n['time'] as String, style: const TextStyle(fontSize: 10, color: cMuted)),
-                    if (!isRead) Container(margin: const EdgeInsets.only(left: 8), width: 7, height: 7, decoration: BoxDecoration(color: cPrimary, borderRadius: BorderRadius.circular(100))),
-                  ]),
-                );
-              },
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  // ─── TAB 10: SETTINGS ────────────────────────────────
+  // ─── TAB 8: SETTINGS ─────────────────────────────────
   Widget _buildSettingsTab() {
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -1677,231 +1633,201 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
 
   // ─── DIALOGS ─────────────────────────────────────────
   void _showAddPatientDialog() {
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController();
+    final dobCtrl = TextEditingController(text: '1990-01-01');
+    final mobileCtrl = TextEditingController();
+    final addressCtrl = TextEditingController();
+    String gender = 'F';
+    bool submitting = false;
+
     showDialog(context: context, builder: (ctx) => Dialog(
       backgroundColor: cCard,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
+      child: StatefulBuilder(builder: (ctx, setD) => Container(
         width: 480, padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Add New Patient', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
-              Text('Register a new patient in the system', style: TextStyle(fontSize: 11, color: cMuted)),
+        child: Form(
+          key: formKey,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Add New Patient', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
+                Text('Register a new patient in the system', style: TextStyle(fontSize: 11, color: cMuted)),
+              ]),
+              IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
             ]),
-            IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
+            const Divider(height: 24, color: cBorder),
+            _textField('Full Name *', nameCtrl, validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: _textField('Date of Birth (YYYY-MM-DD) *', dobCtrl, validator: (v) => RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v ?? '') ? null : 'Use YYYY-MM-DD')),
+              const SizedBox(width: 10),
+              Expanded(child: DropdownButtonFormField<String>(
+                value: gender,
+                decoration: const InputDecoration(labelText: 'Gender *', isDense: true),
+                items: const [DropdownMenuItem(value: 'M', child: Text('Male')), DropdownMenuItem(value: 'F', child: Text('Female')), DropdownMenuItem(value: 'Other', child: Text('Other'))],
+                onChanged: (v) => gender = v ?? 'F',
+              )),
+            ]),
+            const SizedBox(height: 10),
+            _textField('Mobile *', mobileCtrl, validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null),
+            const SizedBox(height: 10),
+            _textField('Address *', addressCtrl, validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null),
+            const SizedBox(height: 20),
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              _outlineBtn('Cancel', null, submitting ? () {} : () => Navigator.pop(ctx)),
+              const SizedBox(width: 8),
+              _primaryBtn(submitting ? 'Saving…' : 'Save Patient', null, submitting ? () {} : () async {
+                if (!formKey.currentState!.validate()) return;
+                setD(() => submitting = true);
+                try {
+                  await _api.createPatient({
+                    'full_name': nameCtrl.text.trim(),
+                    'dob': dobCtrl.text.trim(),
+                    'gender': gender,
+                    'mobile': mobileCtrl.text.trim(),
+                    'address': addressCtrl.text.trim(),
+                    'blood_group': 'O+',
+                    'occupation': '—',
+                  });
+                  if (!ctx.mounted) return;
+                  Navigator.pop(ctx);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Patient registered.')));
+                  _fetchData();
+                } on ApiException catch (e) {
+                  if (!ctx.mounted) return;
+                  setD(() => submitting = false);
+                  ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text(e.message), backgroundColor: cRed600));
+                }
+              }),
+            ]),
           ]),
-          const Divider(height: 24, color: cBorder),
-          const Text('REQUIRED INFORMATION', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: cMuted, letterSpacing: 1.0)),
-          const SizedBox(height: 12),
-          _formField('Full Name *', 'e.g. Ramesh Kumar'),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: _formField('Date of Birth *', 'YYYY-MM-DD')),
-            const SizedBox(width: 10),
-            Expanded(child: _formField('Gender *', 'Male / Female')),
-          ]),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: _formField('Mobile *', '98765-43210')),
-            const SizedBox(width: 10),
-            Expanded(child: _formField('Occupation *', 'e.g. Teacher')),
-          ]),
-          const SizedBox(height: 10),
-          _formField('Address *', 'Full address'),
-          const SizedBox(height: 20),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            _outlineBtn('Cancel', null, () => Navigator.pop(ctx)),
-            const SizedBox(width: 8),
-            _primaryBtn('Save Patient', null, () => Navigator.pop(ctx)),
-          ]),
-        ]),
-      ),
+        ),
+      )),
     ));
   }
 
   void _showBookApptDialog() {
-    showDialog(context: context, builder: (ctx) => Dialog(
-      backgroundColor: cCard,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 400, padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Book Appointment', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
-            IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
-          ]),
-          const Divider(height: 20, color: cBorder),
-          _formField('Search Patient', 'Name or mobile number'),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: _formField('Date', _date)),
-            const SizedBox(width: 10),
-            Expanded(child: _formField('Time', 'HH:MM')),
-          ]),
-          const SizedBox(height: 10),
-          _formField('Visit Type', 'New / Follow Up'),
-          const SizedBox(height: 20),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            _outlineBtn('Cancel', null, () => Navigator.pop(ctx)),
-            const SizedBox(width: 8),
-            _primaryBtn('Book Appointment', null, () => Navigator.pop(ctx)),
-          ]),
-        ]),
-      ),
-    ));
-  }
+    final formKey = GlobalKey<FormState>();
+    String? selectedPatientId;
+    final dateCtrl = TextEditingController(text: _date);
+    final timeCtrl = TextEditingController(text: '10:00');
+    String visitType = VisitType.newVisit;
+    List<dynamic> patients = List.of(_patients);
+    bool loading = patients.isEmpty;
+    String? loadError;
+    bool submitting = false;
 
-  void _showCreateInvoiceDialog() {
     showDialog(context: context, builder: (ctx) => Dialog(
       backgroundColor: cCard,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 600, padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Create Invoice', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
-            IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
-          ]),
-          const Divider(height: 20, color: cBorder),
-          _formField('Search Patient', 'Name or patient ID'),
-          const SizedBox(height: 10),
-          _formField('Service Description', 'Consultation Fee, Medicine Charges…'),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: _formField('Amount (₹)', '500')),
-            const SizedBox(width: 10),
-            Expanded(child: _formField('Date', _date)),
-          ]),
-          const SizedBox(height: 20),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            _outlineBtn('Save Draft', null, () => Navigator.pop(ctx)),
-            const SizedBox(width: 8),
-            _primaryBtn('Issue Invoice', null, () { Navigator.pop(ctx); _fetchData(); }),
-          ]),
-        ]),
-      ),
-    ));
-  }
+      child: StatefulBuilder(builder: (ctx, setD) {
+        Future<void> load() async {
+          setD(() => loading = true);
+          try {
+            final res = await _api.getPatients();
+            setD(() { patients = res; loading = false; });
+          } on ApiException catch (e) {
+            setD(() { loadError = e.message; loading = false; });
+          }
+        }
 
-  void _showPaymentDialog(dynamic inv) {
-    showDialog(context: context, builder: (ctx) => Dialog(
-      backgroundColor: cCard,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 360, padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Collect Payment', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
-            IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
-          ]),
-          const Divider(height: 20, color: cBorder),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: cMutedBg, borderRadius: BorderRadius.circular(8)),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              const Text('Balance Due', style: TextStyle(fontSize: 11, color: cMuted)),
-              Text('₹${(inv['total_amount'] ?? 0).toStringAsFixed(0)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: cRed600)),
+        if (patients.isEmpty && loading && loadError == null) load();
+
+        return Container(
+          width: 420, padding: const EdgeInsets.all(24),
+          child: Form(
+            key: formKey,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Book Appointment', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
+                IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
+              ]),
+              const Divider(height: 20, color: cBorder),
+              if (loading)
+                const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()))
+              else if (loadError != null)
+                Column(children: [
+                  Text('Failed to load patients: $loadError', style: const TextStyle(fontSize: 11, color: cRed600)),
+                  const SizedBox(height: 8),
+                  _outlineBtn('Retry', Icons.refresh_rounded, load),
+                ])
+              else ...[
+                DropdownButtonFormField<String>(
+                  value: selectedPatientId,
+                  decoration: const InputDecoration(labelText: 'Select Patient *', isDense: true),
+                  items: patients.map<DropdownMenuItem<String>>((p) => DropdownMenuItem<String>(
+                    value: p['patient_id'],
+                    child: Text('${p['full_name']} (${p['mobile_number'] ?? p['mobile'] ?? ''})'),
+                  )).toList(),
+                  onChanged: (v) => setD(() => selectedPatientId = v),
+                  validator: (v) => v == null ? 'Required' : null,
+                ),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Expanded(child: _textField('Date (YYYY-MM-DD)', dateCtrl, validator: (v) => RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v ?? '') ? null : 'Use YYYY-MM-DD')),
+                  const SizedBox(width: 10),
+                  Expanded(child: _textField('Time (HH:MM)', timeCtrl, validator: (v) => RegExp(r'^\d{2}:\d{2}$').hasMatch(v ?? '') ? null : 'HH:MM')),
+                ]),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: visitType,
+                  decoration: const InputDecoration(labelText: 'Visit Type', isDense: true),
+                  items: const [
+                    DropdownMenuItem(value: VisitType.newVisit, child: Text('New')),
+                    DropdownMenuItem(value: VisitType.followUp, child: Text('Follow-Up')),
+                    DropdownMenuItem(value: VisitType.walkIn, child: Text('Walk-In')),
+                  ],
+                  onChanged: (v) => visitType = v ?? VisitType.newVisit,
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                _outlineBtn('Cancel', null, submitting ? () {} : () => Navigator.pop(ctx)),
+                const SizedBox(width: 8),
+                _primaryBtn(submitting ? 'Booking…' : 'Book Appointment', null, submitting ? () {} : () async {
+                  if (!formKey.currentState!.validate()) return;
+                  setD(() => submitting = true);
+                  try {
+                    await _api.createAppointment({
+                      'patient_id': selectedPatientId,
+                      'doctor_id': _api.userId ?? 'doctor-uuid-placeholder',
+                      'clinic_id': _clinicId,
+                      'appt_date': dateCtrl.text.trim(),
+                      'appt_time': timeCtrl.text.trim(),
+                      'visit_type': visitType,
+                    });
+                    if (!ctx.mounted) return;
+                    Navigator.pop(ctx);
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Appointment booked.')));
+                    _fetchData();
+                  } on ApiException catch (e) {
+                    if (!ctx.mounted) return;
+                    setD(() => submitting = false);
+                    ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text(e.message), backgroundColor: cRed600));
+                  }
+                }),
+              ]),
             ]),
           ),
-          const SizedBox(height: 12),
-          _formField('Amount (₹)', '${inv['total_amount'] ?? 0}'),
-          const SizedBox(height: 10),
-          const Text('Payment Mode', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cMuted)),
-          const SizedBox(height: 6),
-          Row(children: [
-            for (final mode in ['Cash', 'UPI', 'Card']) Expanded(child: Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(border: Border.all(color: cBorder), borderRadius: BorderRadius.circular(8)),
-                child: Column(children: [
-                  Icon(mode == 'Cash' ? Icons.payments_outlined : mode == 'UPI' ? Icons.phone_android_rounded : Icons.credit_card_rounded, size: 16, color: cMuted),
-                  const SizedBox(height: 4),
-                  Text(mode, style: const TextStyle(fontSize: 10, color: cMuted)),
-                ]),
-              ),
-            )),
-          ]),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () { Navigator.pop(ctx); _fetchData(); },
-              style: ElevatedButton.styleFrom(backgroundColor: cEm600, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), elevation: 0),
-              child: const Text('Record Payment', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-            ),
-          ),
-        ]),
-      ),
-    ));
-  }
-
-  void _showStockInwardDialog() {
-    showDialog(context: context, builder: (ctx) => Dialog(
-      backgroundColor: cCard,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 420, padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Stock Inward', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cFg)),
-            IconButton(icon: const Icon(Icons.close_rounded, size: 18, color: cMuted), onPressed: () => Navigator.pop(ctx)),
-          ]),
-          const Divider(height: 20, color: cBorder),
-          _formField('Search Medicine', 'Medicine name or code'),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: _formField('Batch No', 'BT-XXXX')),
-            const SizedBox(width: 10),
-            Expanded(child: _formField('Quantity', 'Units received')),
-          ]),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: _formField('Expiry Date', 'YYYY-MM-DD')),
-            const SizedBox(width: 10),
-            Expanded(child: _formField('Supplier', 'Supplier name')),
-          ]),
-          const SizedBox(height: 10),
-          _formField('Cost per Unit (₹)', '0.00'),
-          const SizedBox(height: 20),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            _outlineBtn('Cancel', null, () => Navigator.pop(ctx)),
-            const SizedBox(width: 8),
-            _primaryBtn('Record Inward', null, () => Navigator.pop(ctx)),
-          ]),
-        ]),
-      ),
+        );
+      }),
     ));
   }
 
   // ─── HELPER WIDGETS ──────────────────────────────────
   Widget _statusPill(String status) {
-    final Map<String, List<Color>> pillMap = {
-      'scheduled':     [const Color(0xFFF1F5F9), const Color(0xFF475569)],
-      'arrived':       [cBlue50, cBlue700],
-      'waiting':       [cAmber50, cAmber700],
-      'in consultation': [cAmber50, cAmber700],
-      'completed':     [cEm50, cEm700],
-      'cancelled':     [cRed50, cRed600],
-      'no show':       [cSlate100, cSlate600],
-      'paid':          [cEm50, cEm700],
-      'partial':       [cAmber50, cAmber700],
-      'draft':         [cSlate100, cSlate600],
-      'issued':        [cBlue50, cBlue700],
-      'active':        [cEm50, cEm700],
-      'follow-up':     [cPurple50, cPurple700],
-      'low':           [cAmber50, cAmber700],
-      'expiring':      [cRed50, cRed600],
-      'ok':            [cEm50, cEm700],
-    };
-    final colors = pillMap[status.toLowerCase()] ?? [cSlate100, cMuted];
+    final color = statusColor(status);
+    final bg = statusBg(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: colors[0], borderRadius: BorderRadius.circular(100), border: Border.all(color: colors[1].withOpacity(0.2))),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(100), border: Border.all(color: color.withOpacity(0.2))),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 5, height: 5, decoration: BoxDecoration(color: colors[1].withOpacity(0.8), borderRadius: BorderRadius.circular(100))),
+        Container(width: 5, height: 5, decoration: BoxDecoration(color: color.withOpacity(0.8), borderRadius: BorderRadius.circular(100))),
         const SizedBox(width: 5),
-        Text(status, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: colors[1])),
+        Text(status, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color)),
       ]),
     );
   }
@@ -1934,22 +1860,20 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
     child: icon != null ? Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14), const SizedBox(width: 5), Text(label)]) : Text(label),
   );
 
-  Widget _sectionWrap({required Widget child}) => child;
-
-  Widget _formField(String label, String hint) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: cFg)),
-    const SizedBox(height: 5),
-    TextField(
+  Widget _textField(String label, TextEditingController controller, {String? Function(String?)? validator}) {
+    return TextFormField(
+      controller: controller,
+      validator: validator,
       style: const TextStyle(fontSize: 12, color: cFg),
       decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: const TextStyle(fontSize: 12, color: cMuted),
+        labelText: label,
+        labelStyle: const TextStyle(fontSize: 11, color: cMuted),
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: cBorder)),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: cBorder)),
         focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: cPrimary, width: 1.5)),
         filled: true, fillColor: cCard,
       ),
-    ),
-  ]);
+    );
+  }
 }

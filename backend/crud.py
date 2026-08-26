@@ -1,26 +1,35 @@
-from datetime import datetime, date
-import json
-from sqlalchemy.orm import Session
+import re
+from datetime import datetime, date, timedelta
+from decimal import Decimal
+from typing import Optional
+
+from sqlalchemy.orm import Session, joinedload, selectinload
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
+
 import models, schemas, auth
 
-# --- Audit Logging Helper ---
-def log_audit(db: Session, entity_type: str, entity_id: str, action: str, performed_by: str, before_data: dict = None, after_data: dict = None):
-    changes = {
-        "before": before_data or {},
-        "after": after_data or {}
-    }
+MONEY_QUANT = Decimal("0.01")
+
+
+def _q(v) -> Decimal:
+    return Decimal(str(v)).quantize(MONEY_QUANT)
+
+
+# --- Audit Logging Helper (NFR-7) ---
+def log_audit(db: Session, entity_type: str, entity_id: str, action: str,
+              performed_by: str, before_data: dict = None, after_data: dict = None):
     log_entry = models.AuditLog(
         entity_type=entity_type,
         entity_id=entity_id,
         action=action,
         performed_by=performed_by,
-        changes_json=changes
+        changes_json={"before": before_data or {}, "after": after_data or {}},
     )
     db.add(log_entry)
     db.commit()
 
-# Helper to serialize SQLAlchemy model to dict for audit logs
+
 def model_to_dict(model_instance) -> dict:
     if not model_instance:
         return {}
@@ -29,9 +38,23 @@ def model_to_dict(model_instance) -> dict:
         val = getattr(model_instance, column.name)
         if isinstance(val, (datetime, date)):
             res[column.name] = val.isoformat()
+        elif isinstance(val, Decimal):
+            res[column.name] = float(_q(val))
         else:
             res[column.name] = val
     return res
+
+
+# --- Notifications outbox (§5.11) ---
+def notify(db: Session, event: str, channel: str, recipient: str, body: str,
+           patient_id: str = None, subject: str = None):
+    row = models.NotificationLog(
+        event=event, channel=channel, recipient=recipient,
+        subject=subject, body=body, status="Queued", patient_id=patient_id,
+    )
+    db.add(row)
+    db.commit()
+
 
 # --- Clinic CRUD ---
 def create_clinic(db: Session, clinic: schemas.ClinicCreate, user_id: str) -> models.Clinic:
@@ -42,11 +65,29 @@ def create_clinic(db: Session, clinic: schemas.ClinicCreate, user_id: str) -> mo
     log_audit(db, "Clinic", db_clinic.clinic_id, "CREATE", user_id, after_data=model_to_dict(db_clinic))
     return db_clinic
 
+
+def update_clinic(db: Session, clinic_id: str, data: schemas.ClinicUpdate, user_id: str) -> models.Clinic:
+    clinic = get_clinic(db, clinic_id)
+    if not clinic:
+        raise HTTPException(status_code=404, detail="Clinic not found")
+    before = model_to_dict(clinic)
+    updates = data.model_dump(exclude_unset=True)
+    for k, v in updates.items():
+        setattr(clinic, k, v)
+    db.commit()
+    db.refresh(clinic)
+    log_audit(db, "Clinic", clinic.clinic_id, "UPDATE", user_id,
+              before_data=before, after_data=model_to_dict(clinic))
+    return clinic
+
+
 def get_clinics(db: Session) -> list[models.Clinic]:
     return db.query(models.Clinic).all()
 
-def get_clinic(db: Session, clinic_id: str) -> models.Clinic:
+
+def get_clinic(db: Session, clinic_id: str) -> Optional[models.Clinic]:
     return db.query(models.Clinic).filter(models.Clinic.clinic_id == clinic_id).first()
+
 
 # --- User CRUD ---
 def create_user(db: Session, user: schemas.UserCreate, creator_id: str = None) -> models.User:
@@ -55,7 +96,7 @@ def create_user(db: Session, user: schemas.UserCreate, creator_id: str = None) -
         email=user.email,
         password_hash=auth.get_password_hash(user.password),
         role=user.role,
-        clinic_ids=user.clinic_ids
+        clinic_ids=user.clinic_ids,
     )
     db.add(db_user)
     db.commit()
@@ -64,170 +105,318 @@ def create_user(db: Session, user: schemas.UserCreate, creator_id: str = None) -
         log_audit(db, "User", db_user.user_id, "CREATE", creator_id, after_data=model_to_dict(db_user))
     return db_user
 
-def get_user_by_email(db: Session, email: str) -> models.User:
+
+def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.email == email).first()
 
+
 def get_users(db: Session) -> list[models.User]:
-    return db.query(models.User).all()
+    return db.query(models.User).order_by(models.User.created_at.desc()).all()
+
+
+def update_user(db: Session, user_id: str, data: schemas.UserUpdate, actor_id: str) -> models.User:
+    user = db.query(models.User).filter(models.User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    before = model_to_dict(user)
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(user, k, v)
+    db.commit()
+    db.refresh(user)
+    log_audit(db, "User", user.user_id, "UPDATE", actor_id,
+              before_data=before, after_data=model_to_dict(user))
+    return user
+
+
+def reset_password(db: Session, user_id: str, new_password: str, actor_id: str):
+    user = db.query(models.User).filter(models.User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.password_hash = auth.get_password_hash(new_password)
+    auth.revoke_all_refresh_tokens(db, "user", user_id)
+    log_audit(db, "User", user_id, "UPDATE", actor_id,
+              after_data={"password": "reset"})
+
+
+def delete_user(db: Session, user_id: str, actor_id: str):
+    user = db.query(models.User).filter(models.User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.user_id == actor_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    before = model_to_dict(user)
+    auth.revoke_all_refresh_tokens(db, "user", user_id)
+    db.delete(user)
+    db.commit()
+    log_audit(db, "User", user_id, "DELETE", actor_id, before_data=before)
+
 
 # --- Patient CRUD ---
-def create_patient(db: Session, patient: schemas.PatientCreate, user_id: str) -> models.Patient:
-    # Auto-generate a human-readable unique patient ID (e.g. VHC-2026-0001)
-    count = db.query(models.Patient).count()
-    unique_id = f"VHC-{datetime.now().year}-{1000 + count + 1}"
-    
-    db_patient = models.Patient(
-        **patient.model_dump(),
-        unique_patient_id=unique_id
-    )
-    db.add(db_patient)
-    db.commit()
-    db.refresh(db_patient)
-    log_audit(db, "Patient", db_patient.patient_id, "CREATE", user_id, after_data=model_to_dict(db_patient))
+def generate_unique_patient_id(db: Session) -> str:
+    """Race-safe-enough sequential ID: VHC-YYYY-NNNN derived from max suffix."""
+    year = datetime.now().year
+    prefix = f"VHC-{year}-"
+    rows = db.query(models.Patient.unique_patient_id).filter(
+        models.Patient.unique_patient_id.like(f"{prefix}%")
+    ).all()
+    max_n = 1000
+    for (uid,) in rows:
+        m = re.match(rf"^{prefix}(\d+)$", uid or "")
+        if m:
+            max_n = max(max_n, int(m.group(1)))
+    return f"{prefix}{max_n + 1}"
+
+
+def create_patient(db: Session, patient: schemas.PatientCreate, user_id: str = None) -> models.Patient:
+    # Idempotent on mobile: existing patient lookup (PRD §13.1 — mobile is the identifier)
+    existing = get_patient_by_mobile(db, patient.mobile)
+    if existing:
+        return existing
+    data = patient.model_dump()
+    unique_id = generate_unique_patient_id(db)
+    for attempt in range(3):
+        try:
+            db_patient = models.Patient(**data, unique_patient_id=unique_id)
+            db.add(db_patient)
+            db.commit()
+            db.refresh(db_patient)
+            break
+        except IntegrityError:
+            db.rollback()
+            unique_id = generate_unique_patient_id(db)
+    else:
+        raise HTTPException(status_code=500, detail="Could not allocate a unique patient ID")
+    if user_id:
+        log_audit(db, "Patient", db_patient.patient_id, "CREATE", user_id, after_data=model_to_dict(db_patient))
     return db_patient
+
+
+def get_patient_by_mobile(db: Session, mobile: str) -> Optional[models.Patient]:
+    return db.query(models.Patient).filter(models.Patient.mobile == mobile).first()
+
 
 def get_patients(db: Session, search: str = None) -> list[models.Patient]:
     query = db.query(models.Patient)
     if search:
+        like = f"%{search}%"
         query = query.filter(
-            (models.Patient.full_name.icontains(search)) |
-            (models.Patient.mobile.contains(search)) |
-            (models.Patient.unique_patient_id.icontains(search))
+            (models.Patient.full_name.ilike(like))
+            | (models.Patient.mobile.contains(search))
+            | (models.Patient.unique_patient_id.ilike(like))
         )
     return query.order_by(models.Patient.created_at.desc()).all()
 
-def get_patient(db: Session, patient_id: str) -> models.Patient:
+
+def get_patient(db: Session, patient_id: str) -> Optional[models.Patient]:
     return db.query(models.Patient).filter(models.Patient.patient_id == patient_id).first()
 
-# --- 7-Day Consultation Fee Waiver Check ---
+
+# --- 7-Day Consultation Fee Waiver Check (BR-3) ---
 def check_7day_waiver_eligibility(db: Session, patient_id: str, appt_date_str: str) -> bool:
     try:
-        current_date = datetime.strptime(appt_date_str, "%Y-%m-%d").date()
-    except ValueError:
-        return False
-        
-    # Get last completed consultation for this patient
-    last_appt = db.query(models.Appointment).filter(
-        models.Appointment.patient_id == patient_id,
-        models.Appointment.status == "Completed"
-    ).order_by(models.Appointment.appt_date.desc()).first()
-    
-    if not last_appt:
-        return False
-        
-    try:
-        last_date = datetime.strptime(last_appt.appt_date, "%Y-%m-%d").date()
-        diff = (current_date - last_date).days
-        return 0 <= diff <= 7
+        current_date = date.fromisoformat(appt_date_str)
     except ValueError:
         return False
 
+    last_appt = db.query(models.Appointment).filter(
+        models.Appointment.patient_id == patient_id,
+        models.Appointment.status == "Completed",
+    ).order_by(models.Appointment.appt_date.desc()).first()
+
+    if not last_appt:
+        return False
+    diff = (current_date - last_appt.appt_date).days
+    return 0 <= diff <= 7
+
+
 # --- Appointment CRUD ---
+APPT_TRANSITIONS = {
+    "Scheduled": {"Confirmed", "Cancelled"},
+    "Confirmed": {"Arrived", "Cancelled", "Scheduled"},
+    "Arrived": {"In Consultation", "No-Show", "Cancelled"},
+    "In Consultation": {"Completed"},
+    "Completed": set(),
+    "No-Show": {"Confirmed"},   # allow re-booking flow via confirm
+    "Cancelled": {"Scheduled"},
+}
+
+
+def next_token_number(db: Session, clinic_id: str, appt_date: date) -> int:
+    max_tok = db.query(models.Appointment.token_number).filter(
+        models.Appointment.clinic_id == clinic_id,
+        models.Appointment.appt_date == appt_date,
+    ).all()
+    vals = [t for (t,) in max_tok if t]
+    return (max(vals) + 1) if vals else 1
+
+
 def create_appointment(db: Session, appt: schemas.AppointmentCreate, user_id: str) -> models.Appointment:
+    doctor = db.query(models.User).filter(
+        models.User.user_id == appt.doctor_id, models.User.is_active.is_(True)
+    ).first()
+    if not doctor:
+        raise HTTPException(status_code=400, detail="Doctor not found or inactive")
+
     db_appt = models.Appointment(**appt.model_dump())
+    db_appt.token_number = next_token_number(db, appt.clinic_id, appt.appt_date)
     db.add(db_appt)
     db.commit()
     db.refresh(db_appt)
     log_audit(db, "Appointment", db_appt.appt_id, "CREATE", user_id, after_data=model_to_dict(db_appt))
+
+    patient = get_patient(db, db_appt.patient_id)
+    notify(db, "appointment_booked", "SMS",
+           patient.mobile if patient else "unknown",
+           f"Appointment booked for {db_appt.appt_date} at {db_appt.appt_time}. Token #{db_appt.token_number}",
+           patient_id=db_appt.patient_id)
     return db_appt
 
+
 def get_appointments(db: Session, clinic_id: str = None, date_str: str = None) -> list[models.Appointment]:
-    query = db.query(models.Appointment)
+    query = db.query(models.Appointment).options(joinedload(models.Appointment.patient))
     if clinic_id:
         query = query.filter(models.Appointment.clinic_id == clinic_id)
     if date_str:
-        query = query.filter(models.Appointment.appt_date == date_str)
+        query = query.filter(models.Appointment.appt_date == date.fromisoformat(date_str))
     return query.order_by(models.Appointment.appt_time.asc()).all()
 
-def get_appointment(db: Session, appt_id: str) -> models.Appointment:
-    return db.query(models.Appointment).filter(models.Appointment.appt_id == appt_id).first()
 
-def update_appointment_status(db: Session, appt_id: str, status_update: str, user_id: str) -> models.Appointment:
-    appt = db.query(models.Appointment).filter(models.Appointment.appt_id == appt_id).first()
+def get_appointment(db: Session, appt_id: str) -> Optional[models.Appointment]:
+    return db.query(models.Appointment).options(joinedload(models.Appointment.patient)).filter(
+        models.Appointment.appt_id == appt_id).first()
+
+
+def update_appointment_status(db: Session, appt_id: str, status_update: str,
+                              user_id: str, reason: str = None) -> models.Appointment:
+    appt = get_appointment(db, appt_id)
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
-        
-    before = model_to_dict(appt)
-    
-    # Enforce Single Active Consultation Rule
+
+    if status_update == "Cancelled" and not reason:
+        raise HTTPException(status_code=400, detail="A cancellation reason is required (BR-5)")
+
+    allowed = APPT_TRANSITIONS.get(appt.status, set())
+    if status_update != appt.status and status_update not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid transition: '{appt.status}' → '{status_update}'. Allowed: {sorted(allowed) or 'none'}",
+        )
+
+    # BR-2 / BR-12: single active consultation per clinic/day
     if status_update == "In Consultation":
         active_appt = db.query(models.Appointment).filter(
             models.Appointment.clinic_id == appt.clinic_id,
             models.Appointment.appt_date == appt.appt_date,
             models.Appointment.status == "In Consultation",
-            models.Appointment.appt_id != appt_id
+            models.Appointment.appt_id != appt_id,
         ).first()
         if active_appt:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Action blocked: Patient {active_appt.patient.full_name} is already in consultation with the doctor."
+                detail=f"Action blocked: Patient {active_appt.patient.full_name} is already in consultation.",
             )
-            
+
+    before = model_to_dict(appt)
     appt.status = status_update
+    if status_update == "Cancelled":
+        appt.cancel_reason = reason
     db.commit()
     db.refresh(appt)
-    log_audit(db, "Appointment", appt.appt_id, "UPDATE", user_id, before_data=before, after_data=model_to_dict(appt))
+    log_audit(db, "Appointment", appt.appt_id, "UPDATE", user_id,
+              before_data=before, after_data=model_to_dict(appt))
+
+    events = {"Confirmed": "appointment_confirmed", "Cancelled": "appointment_cancelled"}
+    if appt.status in events:
+        notify(db, events[appt.status], "SMS", appt.patient.mobile,
+               f"Your appointment on {appt.appt_date} is {appt.status.lower()}."
+               + (f" Reason: {reason}" if reason else ""),
+               patient_id=appt.patient_id)
     return appt
 
-def reschedule_appointment(db: Session, appt_id: str, reschedule_data: schemas.AppointmentReschedule, user_id: str) -> models.Appointment:
-    appt = db.query(models.Appointment).filter(models.Appointment.appt_id == appt_id).first()
+
+def reschedule_appointment(db: Session, appt_id: str, r: schemas.AppointmentReschedule,
+                           user_id: str) -> models.Appointment:
+    appt = get_appointment(db, appt_id)
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
-        
+    if appt.status in ("Completed", "Cancelled"):
+        raise HTTPException(status_code=400, detail=f"Cannot reschedule a {appt.status.lower()} appointment")
+    if appt.status == "In Consultation":
+        raise HTTPException(status_code=400, detail="Cannot reschedule while in consultation")
+
     before = model_to_dict(appt)
-    appt.appt_date = reschedule_data.appt_date
-    appt.appt_time = reschedule_data.appt_time
-    appt.status = "Confirmed"  # Automatically confirm on reschedule
-    
+    appt.appt_date = r.appt_date
+    appt.appt_time = r.appt_time
+    appt.status = "Confirmed"
     db.commit()
     db.refresh(appt)
-    log_audit(db, "Appointment", appt.appt_id, "UPDATE", user_id, before_data=before, after_data=model_to_dict(appt))
+    log_audit(db, "Appointment", appt.appt_id, "UPDATE", user_id,
+              before_data=before, after_data=model_to_dict(appt))
+    notify(db, "appointment_rescheduled", "SMS", appt.patient.mobile,
+           f"Appointment rescheduled to {r.appt_date} at {r.appt_time}.",
+           patient_id=appt.patient_id)
     return appt
 
+
 # --- Prescription CRUD ---
-def create_prescription(db: Session, prescription: schemas.PrescriptionCreate, user_id: str) -> models.Prescription:
+def create_prescription(db: Session, p: schemas.PrescriptionCreate, user_id: str) -> models.Prescription:
+    appt = get_appointment(db, p.appt_id)
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if appt.status not in ("In Consultation", "Arrived"):
+        raise HTTPException(status_code=400,
+                            detail=f"Prescription can only be written for an active consultation (current status: {appt.status})")
+    if appt.patient_id != p.patient_id:
+        raise HTTPException(status_code=400, detail="Patient does not match the appointment")
+
     db_rx = models.Prescription(
-        appt_id=prescription.appt_id,
-        patient_id=prescription.patient_id,
-        chief_complaint=prescription.chief_complaint,
-        diagnosis=prescription.diagnosis,
-        medicines=[m.model_dump() for m in prescription.medicines],
-        instructions=prescription.instructions,
-        follow_up_date=prescription.follow_up_date,
-        is_fee_waived=prescription.is_fee_waived
+        appt_id=p.appt_id,
+        patient_id=p.patient_id,
+        chief_complaint=p.chief_complaint,
+        diagnosis=p.diagnosis,
+        medicines=[m.model_dump() for m in p.medicines],
+        instructions=p.instructions,
+        follow_up_date=p.follow_up_date,
+        is_fee_waived=p.is_fee_waived,
     )
     db.add(db_rx)
-    
-    # Automatically update appointment to Completed
-    appt = db.query(models.Appointment).filter(models.Appointment.appt_id == prescription.appt_id).first()
-    if appt:
-        appt.status = "Completed"
-        
+
+    # §5.8.4: completing prescription completes the consultation; billing handoff follows
+    appt.status = "Completed"
     db.commit()
     db.refresh(db_rx)
-    log_audit(db, "Prescription", db_rx.prescription_id, "CREATE", user_id, after_data=model_to_dict(db_rx))
+    log_audit(db, "Prescription", db_rx.prescription_id, "CREATE", user_id,
+              after_data=model_to_dict(db_rx))
     return db_rx
 
-def get_prescriptions_by_patient(db: Session, patient_id: str) -> list[models.Prescription]:
-    return db.query(models.Prescription).filter(models.Prescription.patient_id == patient_id).order_by(models.Prescription.created_at.desc()).all()
 
-# --- Invoice CRUD ---
+def get_prescriptions_by_patient(db: Session, patient_id: str) -> list[models.Prescription]:
+    return db.query(models.Prescription).filter(
+        models.Prescription.patient_id == patient_id
+    ).order_by(models.Prescription.created_at.desc()).all()
+
+
+# --- Invoice CRUD (BR-10, BR-11, §5.5) ---
+def compute_invoice_totals(fees: dict) -> dict:
+    total = (_q(fees["consultation_fee"]) + _q(fees["medicine_charges"])
+             + _q(fees["misc_charges"]) - _q(fees["discount"]))
+    total = max(total, Decimal("0.00"))
+    return {"total_amount": total.quantize(MONEY_QUANT), "due_amount": total.quantize(MONEY_QUANT)}
+
+
 def create_invoice(db: Session, invoice: schemas.InvoiceCreate, user_id: str) -> models.Invoice:
-    # Compute totals
-    total = invoice.consultation_fee + invoice.medicine_charges + invoice.misc_charges - invoice.discount
-    due = total
-    
+    totals = compute_invoice_totals(invoice.model_dump())
     db_invoice = models.Invoice(
         patient_id=invoice.patient_id,
         appt_id=invoice.appt_id,
-        consultation_fee=invoice.consultation_fee,
-        medicine_charges=invoice.medicine_charges,
-        misc_charges=invoice.misc_charges,
-        discount=invoice.discount,
-        total_amount=total,
-        paid_amount=0.0,
-        due_amount=due,
-        status="Draft"
+        consultation_fee=_q(invoice.consultation_fee),
+        medicine_charges=_q(invoice.medicine_charges),
+        misc_charges=_q(invoice.misc_charges),
+        discount=_q(invoice.discount),
+        total_amount=totals["total_amount"],
+        paid_amount=Decimal("0.00"),
+        due_amount=totals["due_amount"],
+        status="Draft",
     )
     db.add(db_invoice)
     db.commit()
@@ -235,106 +424,206 @@ def create_invoice(db: Session, invoice: schemas.InvoiceCreate, user_id: str) ->
     log_audit(db, "Invoice", db_invoice.invoice_id, "CREATE", user_id, after_data=model_to_dict(db_invoice))
     return db_invoice
 
+
 def get_invoices(db: Session, patient_id: str = None) -> list[models.Invoice]:
-    query = db.query(models.Invoice)
+    query = db.query(models.Invoice).options(
+        selectinload(models.Invoice.payments),
+        selectinload(models.Invoice.patient),
+    )
     if patient_id:
         query = query.filter(models.Invoice.patient_id == patient_id)
     return query.order_by(models.Invoice.updated_at.desc()).all()
 
-def get_invoice(db: Session, invoice_id: str) -> models.Invoice:
-    return db.query(models.Invoice).filter(models.Invoice.invoice_id == invoice_id).first()
+
+def get_invoice(db: Session, invoice_id: str) -> Optional[models.Invoice]:
+    return db.query(models.Invoice).options(
+        selectinload(models.Invoice.payments),
+        selectinload(models.Invoice.patient),
+    ).filter(models.Invoice.invoice_id == invoice_id).first()
+
 
 def issue_invoice(db: Session, invoice_id: str, user_id: str) -> models.Invoice:
-    invoice = db.query(models.Invoice).filter(models.Invoice.invoice_id == invoice_id).first()
+    invoice = get_invoice(db, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status != "Draft":
+        raise HTTPException(status_code=400, detail=f"Only Draft invoices can be issued (current: {invoice.status})")
+    if invoice.total_amount <= 0:
+        raise HTTPException(status_code=400, detail="Cannot issue an invoice with zero total")
+
     before = model_to_dict(invoice)
     invoice.status = "Issued"
     invoice.issued_at = datetime.utcnow()
     db.commit()
     db.refresh(invoice)
-    log_audit(db, "Invoice", invoice.invoice_id, "UPDATE", user_id, before_data=before, after_data=model_to_dict(invoice))
+    log_audit(db, "Invoice", invoice.invoice_id, "UPDATE", user_id,
+              before_data=before, after_data=model_to_dict(invoice))
+    notify(db, "invoice_issued", "WhatsApp", invoice.patient.mobile,
+           f"Invoice issued. Total ₹{invoice.total_amount}. Due ₹{invoice.due_amount}.",
+           patient_id=invoice.patient_id)
     return invoice
 
-# --- Payment CRUD ---
+
+# --- Payment CRUD (§5.6, BR-11) ---
 def create_payment(db: Session, invoice_id: str, payment: schemas.PaymentCreate, user_id: str) -> models.Payment:
-    invoice = db.query(models.Invoice).filter(models.Invoice.invoice_id == invoice_id).first()
+    invoice = get_invoice(db, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-        
+    if invoice.status not in ("Issued", "Partially Paid"):
+        raise HTTPException(status_code=400,
+                            detail=f"Payments allowed only on Issued/Partially Paid invoices (current: {invoice.status})")
+
+    amount = _q(payment.amount)
+    due = _q(invoice.due_amount)
+    if amount > due:
+        raise HTTPException(status_code=400,
+                            detail=f"Payment ₹{amount} exceeds due amount ₹{due}")
+
     before_invoice = model_to_dict(invoice)
-    
-    # Record payment
     db_payment = models.Payment(
         invoice_id=invoice_id,
-        amount=payment.amount,
+        amount=amount,
         payment_mode=payment.payment_mode,
         transaction_id=payment.transaction_id,
-        status="Success"
+        status="Success",
     )
     db.add(db_payment)
-    
-    # Update invoice paid and due amounts
-    invoice.paid_amount += payment.amount
-    invoice.due_amount = max(0.0, invoice.total_amount - invoice.paid_amount)
-    
-    if invoice.due_amount <= 0:
-        invoice.status = "Paid"
-    else:
-        invoice.status = "Partially Paid"
-        
+
+    invoice.paid_amount = (_q(invoice.paid_amount) + amount).quantize(MONEY_QUANT)
+    invoice.due_amount = max(_q(invoice.total_amount) - invoice.paid_amount, Decimal("0.00"))
+    invoice.status = "Paid" if invoice.due_amount <= 0 else "Partially Paid"
+
     db.commit()
     db.refresh(db_payment)
     db.refresh(invoice)
-    
+
     log_audit(db, "Payment", db_payment.payment_id, "CREATE", user_id, after_data=model_to_dict(db_payment))
-    log_audit(db, "Invoice", invoice.invoice_id, "UPDATE", user_id, before_data=before_invoice, after_data=model_to_dict(invoice))
-    
+    log_audit(db, "Invoice", invoice.invoice_id, "UPDATE", user_id,
+              before_data=before_invoice, after_data=model_to_dict(invoice))
+    notify(db, "payment_received", "Email", invoice.patient.email or "-",
+           f"Payment of ₹{amount} received. Remaining due ₹{invoice.due_amount}.",
+           patient_id=invoice.patient_id)
     return db_payment
 
-# --- Audit Logs ---
-def get_audit_logs(db: Session) -> list[models.AuditLog]:
-    return db.query(models.AuditLog).order_by(models.AuditLog.timestamp.desc()).all()
 
-# --- Dashboard Stats ---
+# --- Audit Logs ---
+def get_audit_logs(db: Session, entity_type: str = None, action: str = None,
+                   from_date: str = None, to_date: str = None) -> list[models.AuditLog]:
+    query = db.query(models.AuditLog)
+    if entity_type:
+        query = query.filter(models.AuditLog.entity_type == entity_type)
+    if action:
+        query = query.filter(models.AuditLog.action == action)
+    if from_date:
+        query = query.filter(models.AuditLog.timestamp >= datetime.fromisoformat(from_date))
+    if to_date:
+        query = query.filter(models.AuditLog.timestamp <= datetime.fromisoformat(to_date + "T23:59:59"))
+    return query.order_by(models.AuditLog.timestamp.desc()).limit(1000).all()
+
+
+# --- Notifications ---
+def get_notifications(db: Session) -> list[models.NotificationLog]:
+    return db.query(models.NotificationLog).order_by(models.NotificationLog.created_at.desc()).limit(500).all()
+
+
+# --- Dashboard KPIs ---
 def get_dashboard_kpis(db: Session, clinic_id: str, date_str: str) -> dict:
-    # Today's Patients (distinct patients who had appointments today)
+    d = date.fromisoformat(date_str)
     today_patients = db.query(models.Appointment.patient_id).filter(
         models.Appointment.clinic_id == clinic_id,
-        models.Appointment.appt_date == date_str
+        models.Appointment.appt_date == d,
     ).distinct().count()
-    
-    # Active Queue: Patients in Waiting or In Consultation state today
+
     active_queue = db.query(models.Appointment).filter(
         models.Appointment.clinic_id == clinic_id,
-        models.Appointment.appt_date == date_str,
-        models.Appointment.status.in_(["Waiting", "In Consultation"])
+        models.Appointment.appt_date == d,
+        models.Appointment.status.in_(["Arrived", "In Consultation"]),
     ).count()
-    
-    # Today's Revenue: Sum of payments collected today
-    # Note: for simplicity, query payments where paid_at date matches date_str
-    today_start = datetime.strptime(date_str, "%Y-%m-%d")
-    today_end = today_start.replace(hour=23, minute=59, second=59)
-    
-    today_revenue_q = db.query(models.Payment).join(models.Invoice).join(models.Appointment).filter(
+
+    day_start = datetime(d.year, d.month, d.day)
+    day_end = day_start + timedelta(days=1)
+    payments = db.query(models.Payment).join(models.Invoice).join(models.Appointment).filter(
         models.Appointment.clinic_id == clinic_id,
-        models.Payment.paid_at >= today_start,
-        models.Payment.paid_at <= today_end,
-        models.Payment.status == "Success"
+        models.Payment.paid_at >= day_start,
+        models.Payment.paid_at < day_end,
+        models.Payment.status == "Success",
     ).all()
-    today_revenue = sum(p.amount for p in today_revenue_q)
-    
-    # Pending Dues: Sum of due_amount on issued/partially paid invoices linked to this clinic
-    pending_dues_q = db.query(models.Invoice).join(models.Appointment).filter(
+    today_revenue = sum((_q(p.amount) for p in payments), Decimal("0.00"))
+
+    pending_dues_rows = db.query(models.Invoice).join(models.Appointment).filter(
         models.Appointment.clinic_id == clinic_id,
-        models.Invoice.status.in_(["Issued", "Partially Paid"])
+        models.Invoice.status.in_(["Issued", "Partially Paid"]),
     ).all()
-    pending_dues = sum(inv.due_amount for inv in pending_dues_q)
-    
+    pending_dues = sum((_q(i.due_amount) for i in pending_dues_rows), Decimal("0.00"))
+
     return {
         "today_patients": today_patients,
         "active_queue": active_queue,
         "today_revenue": today_revenue,
         "pending_dues": pending_dues,
-        "low_stock_alert": 3 # Hardcoded placeholder for stock metric
+        "low_stock_alert": 0,  # inventory out of scope (§2.2); placeholder kept for UI contract
     }
+
+
+# --- Reports (§5.10.4) ---
+def report_revenue(db: Session, from_date: str, to_date: str, clinic_id: str = None) -> list[schemas.RevenuePoint]:
+    start = datetime.fromisoformat(from_date)
+    end = datetime.fromisoformat(to_date) + timedelta(days=1)
+    q = db.query(models.Payment).filter(
+        models.Payment.status == "Success",
+        models.Payment.paid_at >= start,
+        models.Payment.paid_at < end,
+    )
+    if clinic_id:
+        q = q.join(models.Invoice).join(models.Appointment).filter(models.Appointment.clinic_id == clinic_id)
+    buckets: dict[str, list] = {}
+    for p in q.all():
+        key = p.paid_at.date().isoformat()
+        buckets.setdefault(key, []).append(p.amount)
+    points = []
+    for day in sorted(buckets):
+        amounts = buckets[day]
+        points.append(schemas.RevenuePoint(
+            date=day,
+            revenue=sum((_q(a) for a in amounts), Decimal("0.00")),
+            payments_count=len(amounts),
+        ))
+    return points
+
+
+def report_appointments(db: Session, from_date: str, to_date: str, clinic_id: str = None) -> schemas.AppointmentSummary:
+    q = db.query(models.Appointment).filter(
+        models.Appointment.appt_date >= date.fromisoformat(from_date),
+        models.Appointment.appt_date <= date.fromisoformat(to_date),
+    )
+    if clinic_id:
+        q = q.filter(models.Appointment.clinic_id == clinic_id)
+    rows = q.all()
+    counts: dict[str, int] = {}
+    for a in rows:
+        counts[a.status] = counts.get(a.status, 0) + 1
+    return schemas.AppointmentSummary(
+        total=len(rows),
+        completed=counts.get("Completed", 0),
+        cancelled=counts.get("Cancelled", 0),
+        no_show=counts.get("No-Show", 0),
+        scheduled=counts.get("Scheduled", 0),
+        confirmed=counts.get("Confirmed", 0),
+    )
+
+
+def report_registrations(db: Session, months: int = 6) -> list[schemas.RegistrationPoint]:
+    cutoff = datetime.utcnow() - timedelta(days=30 * months)
+    patients = db.query(models.Patient).filter(models.Patient.created_at >= cutoff).all()
+    buckets: dict[str, int] = {}
+    for p in patients:
+        key = p.created_at.strftime("%Y-%m")
+        buckets[key] = buckets.get(key, 0) + 1
+    return [schemas.RegistrationPoint(month=k, registrations=v) for k, v in sorted(buckets.items())]
+
+
+# --- Portal helpers (§5.9) ---
+def get_patient_appointments(db: Session, patient_id: str) -> list[models.Appointment]:
+    return db.query(models.Appointment).options(joinedload(models.Appointment.patient)).filter(
+        models.Appointment.patient_id == patient_id
+    ).order_by(models.Appointment.appt_date.desc(), models.Appointment.appt_time.asc()).all()

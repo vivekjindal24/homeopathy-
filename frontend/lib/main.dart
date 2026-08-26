@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
+
+import 'core/constants.dart';
+import 'services/api_service.dart';
 import 'screens/role_selection_screen.dart';
 import 'screens/receptionist/receptionist_dashboard.dart';
 import 'screens/doctor/doctor_dashboard.dart';
+import 'screens/doctor/prescription_screen.dart';
+import 'screens/admin/admin_dashboard.dart';
+import 'screens/portal/patient_portal.dart';
 
 void main() {
   runApp(const HcmsApp());
@@ -18,19 +24,19 @@ class HcmsApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF0F766E), // Clinical Teal
-          primary: const Color(0xFF0F766E),
-          secondary: const Color(0xFF0D9488),
-          background: const Color(0xFFF8FAFC), // Off-white background
+          seedColor: AppColors.primary,
+          primary: AppColors.primary,
+          secondary: Color(0xFF0D9488),
           surface: Colors.white,
+          surfaceContainerHighest: AppColors.bg,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+        scaffoldBackgroundColor: AppColors.bg,
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,
           elevation: 0,
-          iconTheme: IconThemeData(color: Color(0xFF1E293B)),
+          iconTheme: IconThemeData(color: AppColors.textDark),
           titleTextStyle: TextStyle(
-            color: Color(0xFF1E293B),
+            color: AppColors.textDark,
             fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
@@ -40,7 +46,7 @@ class HcmsApp extends StatelessWidget {
           elevation: 1,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: Color(0xFFE2E8F0)),
+            side: const BorderSide(color: AppColors.cardBorder),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
@@ -53,43 +59,87 @@ class HcmsApp extends StatelessWidget {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            borderSide: const BorderSide(color: AppColors.cardBorder),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF0F766E), width: 1.5),
+            borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
           ),
-          labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 14),
+          labelStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF0F766E),
+            backgroundColor: AppColors.primary,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF0F766E),
-            side: const BorderSide(color: Color(0xFF0F766E)),
+            foregroundColor: AppColors.primary,
+            side: const BorderSide(color: AppColors.primary),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
         ),
       ),
       initialRoute: '/',
-      routes: {
-        '/': (context) => const RoleSelectionScreen(),
-        '/receptionist': (context) => const ReceptionistDashboard(),
-        '/doctor': (context) => const DoctorDashboard(),
+      onGenerateRoute: (settings) {
+        final args = settings.arguments;
+        switch (settings.name) {
+          case '/':
+            return MaterialPageRoute(builder: (_) => const RoleSelectionScreen());
+          case '/receptionist':
+            return _guarded(context, settings, UserRoles.receptionist,
+                (_) => const ReceptionistDashboard());
+          case '/doctor':
+            return _guarded(context, settings, UserRoles.doctor,
+                (_) => const DoctorDashboard());
+          case '/admin':
+            return _guarded(context, settings, UserRoles.superAdmin,
+                (_) => const AdminDashboard());
+          case '/prescription':
+            // PrescriptionScreen requires the appointment payload (PRD §5.8.3).
+            if (args is Map<String, dynamic>) {
+              return MaterialPageRoute(builder: (_) => buildPrescriptionScreen(args));
+            }
+            return _errorRoute('No appointment selected.');
+          case '/portal':
+            return MaterialPageRoute(builder: (_) => const PatientPortalHome());
+          default:
+            return _errorRoute('Route not found: ${settings.name}');
+        }
       },
+    );
+  }
+
+  /// Route guard: staff portals require an authenticated session with the
+  /// matching role (NFR-6). Patients are redirected to login instead.
+  Route<dynamic> _guarded(
+      BuildContext context, RouteSettings settings, String requiredRole,
+      WidgetBuilder builder) {
+    final api = ApiService();
+    final allowed = {
+      requiredRole,
+      if (requiredRole != UserRoles.superAdmin) UserRoles.superAdmin,
+    };
+    if (api.isLoggedIn && (allowed.contains(api.role))) {
+      return MaterialPageRoute(builder: builder);
+    }
+    return MaterialPageRoute(
+      builder: (_) => RoleSelectionScreen(returnTo: settings.name, requiredRole: requiredRole),
+    );
+  }
+
+  Route<dynamic> _errorRoute(String message) {
+    return MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('Error')),
+        body: Center(child: Text(message)),
+      ),
     );
   }
 }
