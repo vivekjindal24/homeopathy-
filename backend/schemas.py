@@ -14,7 +14,7 @@ InvoiceStatusT = Literal["Draft", "Issued", "Partially Paid", "Paid"]
 VisitTypeT = Literal["New", "Follow-Up", "Walk-In"]
 GenderT = Literal["M", "F", "Other"]
 PaymentModeT = Literal["Cash", "Card", "UPI", "Online"]
-Money = Field(default=Decimal("0.00"), ge=0, max_digits=10, decimal_places=2)
+Money = Field(default=Decimal("0.00"), ge=0)
 
 
 def _validate_date(v: Any, field: str) -> str:
@@ -174,7 +174,7 @@ class MedicineCreate(BaseModel):
     manufacturer: Optional[str] = None
     batch_number: Optional[str] = None
     quantity: int = Field(ge=0, default=0)
-    unit_price: Decimal = Field(ge=0, default=Decimal("0.00"), max_digits=10, decimal_places=2)
+    unit_price: Decimal = Field(ge=0, default=Decimal("0.00"))
     expiry_date: Optional[str] = None
     low_stock_threshold: int = Field(ge=0, default=10)
     clinic_id: str
@@ -185,7 +185,7 @@ class MedicineUpdate(BaseModel):
     manufacturer: Optional[str] = None
     batch_number: Optional[str] = None
     quantity: Optional[int] = Field(default=None, ge=0)
-    unit_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+    unit_price: Optional[Decimal] = Field(default=None, ge=0)
     expiry_date: Optional[str] = None
     low_stock_threshold: Optional[int] = Field(default=None, ge=0)
 
@@ -277,7 +277,7 @@ class AppointmentResponse(ORMModel):
 
 # --- Payment Schemas ---
 class PaymentCreate(BaseModel):
-    amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    amount: Decimal = Field(gt=0)
     payment_mode: PaymentModeT
     transaction_id: Optional[str] = None
 
