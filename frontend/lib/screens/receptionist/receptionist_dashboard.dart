@@ -86,21 +86,19 @@ class _ReceptionistDashboardState extends State<ReceptionistDashboard> {
         _clinicId = clinics.first['clinic_id'];
       }
       if (_clinicId != null) {
-        // Parallel fetches for KPIs + lists + notifications
-        final results = await Future.wait([
-          _api.getKpis(_clinicId!, _date),
-          _api.getAppointments(clinicId: _clinicId, date: _date),
-          _api.getPatients(),
-          _api.getInvoices(),
-          _api.getNotifications().catchError((_) => <dynamic>[]),
-        ]);
+        final k   = _api.getKpis(_clinicId!, _date).catchError((_) => <String, dynamic>{'today_patients': 0, 'active_queue': 0, 'today_revenue': 0.0, 'pending_dues': 0.0});
+        final ap  = _api.getAppointments(clinicId: _clinicId, date: _date).catchError((_) => <dynamic>[]);
+        final pa  = _api.getPatients().catchError((_) => <dynamic>[]);
+        final inv = _api.getInvoices().catchError((_) => <dynamic>[]);
+        final nt  = _api.getNotifications().catchError((_) => <dynamic>[]);
+        final results = await Future.wait([k, ap, pa, inv, nt]);
         if (!mounted) return;
         setState(() {
-          _kpis = results[0] as Map<String, dynamic>;
-          _appointments = results[1] as List<dynamic>;
-          _patients = results[2] as List<dynamic>;
-          _invoices = results[3] as List<dynamic>;
-          _notifications = results[4] as List<dynamic>;
+          _kpis = results[0] is Map ? results[0] as Map<String, dynamic> : _kpis;
+          _appointments = results[1] is List ? results[1] as List<dynamic> : _appointments;
+          _patients = results[2] is List ? results[2] as List<dynamic> : _patients;
+          _invoices = results[3] is List ? results[3] as List<dynamic> : _invoices;
+          _notifications = results[4] is List ? results[4] as List<dynamic> : _notifications;
           _loading = false;
         });
       } else {
